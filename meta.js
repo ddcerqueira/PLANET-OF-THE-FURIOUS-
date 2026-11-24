@@ -777,7 +777,7 @@ const TUT_STEPS = [
   { text: 'Toque em <b>COMPRAR</b> para trazer mais um carro para a garagem.', target: () => el.btnBuy, hand: 'tap', done: 'buy' },
   { text: 'Arraste um carro até a <b>pista</b>. Dica: também dá para tocar no carro e depois na pista.', target: () => firstCarCell(), hand: 'drag', to: () => el.trackWrap, done: 'track' },
   { text: 'Cada volta completa rende <b>moedas</b>. Veja o carro cruzar a linha quadriculada!', target: () => el.trackWrap, hand: null, done: 'lap' },
-  { text: 'Agora <b>junte dois carros iguais</b>: arraste um sobre o outro para evoluir.', target: () => pairCells()[0], hand: 'drag', to: () => pairCells()[1], done: 'merge', fallback: 'Compre outro carro igual e junte os dois.' },
+  { text: 'Agora <b>junte dois carros iguais</b>: arraste um sobre o outro — ou <b>toque 2x</b> num carro para fundir sozinho.', target: () => pairCells()[0], hand: 'drag', to: () => pairCells()[1], done: 'merge', fallback: 'Compre outro carro igual e junte os dois.' },
   { text: 'Abra <b>Upgrades</b>: lá você amplia a pista e a garagem.', target: () => el.tabbar.querySelector('[data-nav="upgrades"]'), hand: 'tap', done: 'sheet:upgrades' },
   { text: 'Compre upgrades quando tiver moedas — os cinzas mostram quanto falta.', target: null, hand: null, done: 'upgrade', next: true, top: true },
 ];
@@ -895,7 +895,7 @@ $('#tutNext').addEventListener('click', () => { Sfx.click(); state.tutorial.step
 /* =========================================================================
    9) ATUALIZAÇÃO DO APP (service worker)
    ========================================================================= */
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.1.0';
 let swReg = null, lastUpdateCheck = 0;
 function setupServiceWorker() {
   if (!('serviceWorker' in navigator) || !/^https?:/.test(location.protocol)) return;

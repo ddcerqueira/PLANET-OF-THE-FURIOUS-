@@ -1,8 +1,10 @@
 /* =========================================================================
    PLANET OF THE FURIOUS — cars.js
    Dados dos carros + gerador procedural de arte (SVG desenhado por código).
-   Nenhuma imagem externa, logo ou arte oficial: apenas silhuetas originais
-   e estilizadas inspiradas em modelos reais de carros.
+   Cada carro lembra a versão vista nos filmes (silhueta do modelo real,
+   pintura, grafismos e modificações marcantes), mas tudo é desenhado do
+   zero: sem logos, textos, decalques ou arte oficial.
+   Estágios: Stock (de fábrica) → Tuned (preparado) → Furious (versão do filme).
    ========================================================================= */
 
 /** Nomes dos 3 estágios de evolução de cada modelo. */
@@ -11,126 +13,124 @@ const TIERS = ['Stock', 'Tuned', 'Furious'];
 /**
  * Os 10 modelos (1 por capítulo). Cada um tem 3 evoluções → 30 níveis.
  *
- * shape: perfil lateral do carro num viewBox 160x80 (carro virado p/ direita)
- *   x0/x1  = traseira/dianteira        belly = linha inferior da carroceria
- *   tail   = altura da traseira         deck  = [x,y] fim do porta-malas
- *   roof   = [x1,x2,y] teto             wind  = [x,y] base do para-brisa
- *   nose   = altura do capô na frente   wheels= [xTraseira,xDianteira,raio]
- *   round  = arredondamento geral dos cantos
- * paint: cores por estágio (body = carroceria, acc = neon/acento, vinyl = adesivo)
- * rims:  cor das rodas por estágio
- * special: detalhes exclusivos do modelo
+ * shape: perfil lateral num viewBox 160x80 (carro virado para a direita)
+ *   x0/x1 = traseira/dianteira   belly = linha inferior   tail = altura da traseira
+ *   deck  = [x,y] fim do porta-malas/vidro traseiro   roof = [x1,x2,y] teto
+ *   wind  = [x,y] base do para-brisa   nose = altura do capô na frente
+ *   wheels= [xTraseira, xDianteira, raio]   round = arredondamento
+ * paint[t]: body (carroceria), livery (grafismo), acc (neon/luz), rim (rodas)
+ * spokes: desenho da roda   wing: aerofólio   widebody: alargadores
  */
 const MODELS = [
   {
+    // Cap. 1 — laranja vivo, grafismo tribal escuro, asa em arco, rodas cromadas
     id: 'supra', name: 'Supra MK4', chapter: 1,
-    shape: { x0: 12, x1: 150, belly: 61, tail: 42, deck: [38, 39], roof: [62, 90, 25], wind: [108, 41], nose: 47, wheels: [37, 124, 11.5], round: 1.25 },
+    shape: { x0: 12, x1: 150, belly: 61, tail: 41, deck: [36, 38], roof: [62, 90, 25], wind: [108, 41], nose: 47, wheels: [37, 124, 11.5], round: 1.35 },
     paint: [
-      { body: '#d9771f', acc: '#ffd27a', vinyl: '#2a2a2a' },
-      { body: '#ff8a1a', acc: '#ff3d00', vinyl: '#141414' },
-      { body: '#ff6a00', acc: '#00e5ff', vinyl: '#00e5ff' },
+      { body: '#ec7a1e', livery: '#2b2b2f', acc: '#9fe7ff', rim: '#c7ccd2' },
+      { body: '#f5801d', livery: '#242428', acc: '#9fe7ff', rim: '#dfe3e8' },
+      { body: '#ff7f11', livery: '#1f1f23', acc: '#5fd0ff', rim: '#eef1f4' },
     ],
-    rims: ['#c4cad1', '#f2f2f2', '#00e5ff'],
-    special: 'hoopWing',
+    spokes: 10, wing: 'hoop',
   },
   {
+    // Cap. 2 — prata com "ondas" azuis na lateral e neon azul
     id: 'skyline', name: 'Skyline R34 GT-R', chapter: 2,
-    shape: { x0: 12, x1: 149, belly: 61, tail: 39, deck: [33, 37], roof: [60, 93, 23], wind: [109, 39], nose: 44, wheels: [37, 124, 11.5], round: 0.7 },
+    shape: { x0: 13, x1: 149, belly: 61, tail: 38, deck: [32, 36], roof: [59, 94, 22], wind: [110, 38], nose: 43, wheels: [37, 124, 11.5], round: 0.65 },
     paint: [
-      { body: '#9aa7b4', acc: '#cfe3ff', vinyl: '#1d3f8f' },
-      { body: '#c9d3dc', acc: '#2f7bff', vinyl: '#1f5bff' },
-      { body: '#2b6cff', acc: '#a6ffef', vinyl: '#ffffff' },
+      { body: '#aeb6bf', livery: '#1d5fe0', acc: '#3f8cff', rim: '#a8afb7' },
+      { body: '#c4cbd3', livery: '#1a5cf0', acc: '#3f8cff', rim: '#d3d8de' },
+      { body: '#cfd5dc', livery: '#1356ff', acc: '#2f7dff', rim: '#e4e8ec' },
     ],
-    rims: ['#9aa0a6', '#d9a62e', '#a6ffef'],
-    special: 'gtrStripes',
+    spokes: 5, wing: 'gt',
   },
   {
-    id: 'rx7', name: 'RX-7 Drift', chapter: 3,
-    shape: { x0: 16, x1: 148, belly: 61, tail: 45, deck: [46, 41], roof: [70, 86, 29], wind: [104, 46], nose: 52, wheels: [40, 123, 11], round: 1.4 },
+    // Cap. 3 — kit widebody arredondado, laranja e preto em diagonal
+    id: 'rx7', name: 'RX-7 Veilside', chapter: 3,
+    shape: { x0: 12, x1: 150, belly: 62, tail: 44, deck: [42, 41], roof: [68, 86, 30], wind: [103, 46], nose: 53, wheels: [39, 125, 11], round: 1.7 },
     paint: [
-      { body: '#c74a1c', acc: '#ffb08a', vinyl: '#1a1a1a' },
-      { body: '#ff5a1f', acc: '#ffcc00', vinyl: '#111111' },
-      { body: '#ff4d14', acc: '#ff2bd6', vinyl: '#111111' },
+      { body: '#d9561e', livery: '#141414', acc: '#ff9a4a', rim: '#9aa0a6' },
+      { body: '#f2631c', livery: '#111111', acc: '#ff9a4a', rim: '#6e5638' },
+      { body: '#ff6a16', livery: '#0d0d0f', acc: '#ffb25a', rim: '#8c6a3c' },
     ],
-    rims: ['#b8bec4', '#1d1d1d', '#ff2bd6'],
-    special: 'driftVinyl',
+    spokes: 6, wing: 'veilside', widebody: 1,
   },
   {
+    // Cap. 4 — hatch prata e preto, tomada de ar no capô, rodas escuras
     id: 'impreza', name: 'Impreza WRX STI', chapter: 4,
-    shape: { x0: 14, x1: 146, belly: 60, tail: 39, deck: [30, 37], roof: [52, 92, 20], wind: [108, 39], nose: 44, wheels: [36, 122, 11.5], round: 0.8 },
+    shape: { x0: 16, x1: 146, belly: 60, tail: 37, deck: [22, 33], roof: [44, 92, 21], wind: [108, 39], nose: 44, wheels: [38, 122, 11.5], round: 0.8 },
     paint: [
-      { body: '#1c3f9c', acc: '#ffd400', vinyl: '#ffffff' },
-      { body: '#1f4fd1', acc: '#ffd400', vinyl: '#ffd400' },
-      { body: '#163ad8', acc: '#ffe14a', vinyl: '#ff7a00' },
+      { body: '#9ea6b0', livery: '#17181c', acc: '#5aa8ff', rim: '#3a3d44' },
+      { body: '#b9c0c8', livery: '#141519', acc: '#5aa8ff', rim: '#26282d' },
+      { body: '#c9cfd6', livery: '#101114', acc: '#4f9dff', rim: '#1d1f23' },
     ],
-    rims: ['#d6a52a', '#e8b52b', '#ffe14a'],
-    special: 'rally',
+    spokes: 6, wing: 'sti', scoop: true,
   },
   {
+    // Cap. 5 — azul clássico com faixas brancas, baixinho de motor central
     id: 'gt40', name: 'GT40', chapter: 5,
-    shape: { x0: 12, x1: 150, belly: 62, tail: 42, deck: [40, 40], roof: [66, 84, 33], wind: [102, 48], nose: 54, wheels: [38, 126, 11.5], round: 1.6 },
+    shape: { x0: 12, x1: 150, belly: 62, tail: 42, deck: [40, 40], roof: [66, 84, 34], wind: [101, 48], nose: 54, wheels: [38, 126, 11.5], round: 1.7 },
     paint: [
-      { body: '#2c5fae', acc: '#ffffff', vinyl: '#ffffff' },
-      { body: '#7fc4ff', acc: '#ff7a00', vinyl: '#ff7a00' },
-      { body: '#0b1b3f', acc: '#ff8a00', vinyl: '#ff8a00' },
+      { body: '#24479a', livery: '#f2f4f7', acc: '#8fb8ff', rim: '#c4c9cf' },
+      { body: '#2252b8', livery: '#f6f7f9', acc: '#8fb8ff', rim: '#d7dbe0' },
+      { body: '#1f55c9', livery: '#ffffff', acc: '#7fb2ff', rim: '#e6e9ed' },
     ],
-    rims: ['#c9ced3', '#ff7a00', '#ff8a00'],
-    special: 'twinStripes',
+    spokes: 5, wing: null,
   },
   {
+    // Cap. 6 — bordô "sangue de boi", bico pontudo e asa altíssima
     id: 'daytona', name: 'Charger Daytona', chapter: 6,
-    shape: { x0: 8, x1: 156, belly: 61, tail: 42, deck: [27, 41], roof: [66, 92, 26], wind: [111, 42], nose: 50, wheels: [35, 126, 11.5], round: 0.9 },
+    shape: { x0: 8, x1: 157, belly: 61, tail: 41, deck: [27, 40], roof: [66, 92, 25], wind: [111, 41], nose: 50, wheels: [35, 126, 12], round: 0.8 },
     paint: [
-      { body: '#e0a41d', acc: '#111111', vinyl: '#111111' },
-      { body: '#ffb300', acc: '#ff2e2e', vinyl: '#141414' },
-      { body: '#ff9e00', acc: '#00ffa3', vinyl: '#00ffa3' },
+      { body: '#6a1520', livery: '#0e0e10', acc: '#ff5a48', rim: '#b9bfc6' },
+      { body: '#61121c', livery: '#0e0e10', acc: '#ff5a48', rim: '#cfd4da' },
+      { body: '#580f19', livery: '#0b0b0d', acc: '#ff4a3d', rim: '#e3e7eb' },
     ],
-    rims: ['#b0b6bc', '#e8e8e8', '#00ffa3'],
-    special: 'tallWing',
+    spokes: 5, wing: 'daytona',
   },
   {
+    // Cap. 7 — hipercarro vermelho em cunha, faróis de LED
     id: 'lykan', name: 'Lykan HyperSport', chapter: 7,
-    shape: { x0: 12, x1: 154, belly: 62, tail: 41, deck: [40, 40], roof: [68, 86, 30], wind: [106, 47], nose: 55, wheels: [38, 128, 11.5], round: 0.35 },
+    shape: { x0: 12, x1: 154, belly: 62, tail: 40, deck: [40, 39], roof: [68, 86, 30], wind: [106, 47], nose: 55, wheels: [38, 128, 11.5], round: 0.35 },
     paint: [
-      { body: '#9b1020', acc: '#ff6b7d', vinyl: '#111111' },
-      { body: '#d0102a', acc: '#ffffff', vinyl: '#111111' },
-      { body: '#e0002a', acc: '#ffd400', vinyl: '#ffd400' },
+      { body: '#b40f26', livery: '#141416', acc: '#ffffff', rim: '#2a2b30' },
+      { body: '#c8102e', livery: '#121214', acc: '#ffffff', rim: '#bfc5cc' },
+      { body: '#d4112f', livery: '#0f0f11', acc: '#e8f6ff', rim: '#d5dae0' },
     ],
-    rims: ['#2a2a2e', '#c0c6cc', '#ffd400'],
-    special: 'hyperLeds',
+    spokes: 10, wing: null,
   },
   {
+    // Cap. 8 — cinza fosco, alargado, blindado e com turbina para o gelo
     id: 'ice', name: 'Charger Ice', chapter: 8,
-    shape: { x0: 10, x1: 151, belly: 60, tail: 38, deck: [30, 37], roof: [60, 93, 24], wind: [111, 39], nose: 42, wheels: [36, 126, 12.5], round: 0.6 },
+    shape: { x0: 10, x1: 151, belly: 56, tail: 35, deck: [30, 34], roof: [60, 93, 21], wind: [111, 36], nose: 39, wheels: [36, 126, 14], round: 0.55 },
     paint: [
-      { body: '#7d8894', acc: '#bfefff', vinyl: '#3a4652' },
-      { body: '#cfe6f2', acc: '#5fd4ff', vinyl: '#2a3a4a' },
-      { body: '#e9f8ff', acc: '#38c8ff', vinyl: '#38c8ff' },
+      { body: '#5b6168', livery: '#30343a', acc: '#a8ecff', rim: '#2e3238' },
+      { body: '#50565d', livery: '#2a2e33', acc: '#a8ecff', rim: '#2a2e33' },
+      { body: '#454a50', livery: '#24272b', acc: '#9fe8ff', rim: '#24272b' },
     ],
-    rims: ['#3b4148', '#5fd4ff', '#bff4ff'],
-    special: 'iceArmor',
+    spokes: 6, wing: null, widebody: 2,
   },
   {
+    // Cap. 9 — pequeno esportivo em cunha com um foguete preso no teto
     id: 'fiero', name: 'Fiero Rocket', chapter: 9,
     shape: { x0: 22, x1: 140, belly: 61, tail: 41, deck: [40, 39], roof: [62, 82, 28], wind: [100, 44], nose: 52, wheels: [42, 118, 10.5], round: 0.5 },
     paint: [
-      { body: '#b3262b', acc: '#ffb3a8', vinyl: '#1e1e1e' },
-      { body: '#e23b2e', acc: '#ffffff', vinyl: '#ffffff' },
-      { body: '#ff2d2d', acc: '#ffae00', vinyl: '#ffae00' },
+      { body: '#b3222a', livery: '#e9ecef', acc: '#ffae00', rim: '#9aa0a6' },
+      { body: '#c4232c', livery: '#f1f3f5', acc: '#ffae00', rim: '#c3c8ce' },
+      { body: '#d0242d', livery: '#ffffff', acc: '#ffb000', rim: '#dfe3e8' },
     ],
-    rims: ['#9aa0a6', '#ffffff', '#ffae00'],
-    special: 'rocket',
+    spokes: 5, wing: null,
   },
   {
+    // Cap. 10 — muscle preto, cromado e com o compressor saindo do capô
     id: 'charger', name: 'Charger Clássico', chapter: 10,
-    shape: { x0: 7, x1: 154, belly: 60, tail: 38, deck: [28, 37], roof: [64, 92, 24], wind: [112, 38], nose: 39, wheels: [35, 128, 12.5], round: 0.4 },
+    shape: { x0: 7, x1: 154, belly: 60, tail: 38, deck: [28, 37], roof: [64, 92, 24], wind: [112, 38], nose: 39, wheels: [35, 128, 12.5], round: 0.45 },
     paint: [
-      { body: '#1b1d22', acc: '#8a8f99', vinyl: '#2c2f36' },
-      { body: '#121318', acc: '#ff3b30', vinyl: '#ff3b30' },
-      { body: '#08090c', acc: '#ff6a00', vinyl: '#ff6a00' },
+      { body: '#16171b', livery: '#2a2c32', acc: '#cfd6de', rim: '#c3c9cf' },
+      { body: '#0f1013', livery: '#26282d', acc: '#cfd6de', rim: '#dde1e6' },
+      { body: '#08090b', livery: '#1f2125', acc: '#ff6a00', rim: '#eef1f4' },
     ],
-    rims: ['#c0c6cc', '#e6e6e6', '#ff6a00'],
-    special: 'blower',
+    spokes: 10, wing: null,
   },
 ];
 
@@ -146,7 +146,7 @@ function carInfo(level) {
     tierName: TIERS[tier],
     name: `${m.name} · ${TIERS[tier]}`,
     body: p.body, acc: p.acc,
-    // Cor do rastro de luz na pista: lanterna vermelha → acento → neon
+    // rastro de luz na pista: lanterna vermelha → neon do carro
     trail: tier === 0 ? '#ff3355' : p.acc,
   };
 }
@@ -180,49 +180,55 @@ function roundedPath(pts) {
   }
   return d + 'Z';
 }
+const f1 = (v) => v.toFixed(1);
 
 /* ------------------------------ Rodas ------------------------------------- */
 
-function wheelSVG(cx, cy, r, rim, tier, acc) {
-  const rr = r * (tier === 0 ? 0.58 : tier === 1 ? 0.68 : 0.74);
+function wheelSVG(cx, cy, r, m, t, p) {
+  const rim = p.rim;
+  const rr = r * (t === 0 ? 0.6 : t === 1 ? 0.7 : 0.76);
   let s = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="#0b0b0e"/>`;
-  s += `<circle cx="${cx}" cy="${cy}" r="${r - 1.2}" fill="none" stroke="#26262c" stroke-width="1.2"/>`;
-  s += `<circle cx="${cx}" cy="${cy}" r="${rr}" fill="${rim}"/>`;
-  s += `<circle cx="${cx}" cy="${cy}" r="${rr * 0.82}" fill="${shade(rim, -0.35)}"/>`;
-  if (tier >= 1) s += `<rect x="${(cx + rr * 0.12).toFixed(1)}" y="${(cy - rr * 0.72).toFixed(1)}" width="${(rr * 0.42).toFixed(1)}" height="${(rr * 0.85).toFixed(1)}" rx="1.4" fill="${tier === 2 ? acc : '#e0262f'}"/>`;
-  // Raios (5 no stock, 6 tuned, 10 furious)
-  const spokes = tier === 0 ? 5 : tier === 1 ? 6 : 10;
-  for (let i = 0; i < spokes; i++) {
-    const a = (i / spokes) * Math.PI * 2;
-    const x2 = cx + Math.cos(a) * rr * 0.82, y2 = cy + Math.sin(a) * rr * 0.82;
-    s += `<line x1="${cx}" y1="${cy}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${rim}" stroke-width="${tier === 2 ? 1.1 : 1.8}" stroke-linecap="round"/>`;
+  s += `<circle cx="${cx}" cy="${cy}" r="${f1(r - 1.3)}" fill="none" stroke="#24242a" stroke-width="1.3"/>`;
+  s += `<circle cx="${cx}" cy="${cy}" r="${f1(rr)}" fill="${rim}"/>`;
+  s += `<circle cx="${cx}" cy="${cy}" r="${f1(rr * 0.84)}" fill="${shade(rim, -0.45)}"/>`;
+  // pinça de freio aparecendo entre os raios (Tuned vermelha, Furious na cor do neon)
+  if (t >= 1) s += `<rect x="${f1(cx + rr * 0.12)}" y="${f1(cy - rr * 0.72)}" width="${f1(rr * 0.42)}" height="${f1(rr * 0.85)}" rx="1.4" fill="${t === 2 ? (m.id === 'charger' ? '#ff6a00' : '#e0262f') : '#c8202a'}"/>`;
+  const n = m.spokes;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + 0.3;
+    s += `<line x1="${cx}" y1="${cy}" x2="${f1(cx + Math.cos(a) * rr * 0.84)}" y2="${f1(cy + Math.sin(a) * rr * 0.84)}" stroke="${rim}" stroke-width="${n >= 10 ? 1.1 : 2}" stroke-linecap="round"/>`;
   }
-  s += `<circle cx="${cx}" cy="${cy}" r="${rr * 0.22}" fill="${shade(rim, 0.3)}"/>`;
-  if (tier === 2) s += `<circle cx="${cx}" cy="${cy}" r="${rr + 0.4}" fill="none" stroke="${acc}" stroke-width="1" opacity=".95" filter="url(#glow${_U})"/>`;
+  s += `<circle cx="${cx}" cy="${cy}" r="${f1(rr * 0.22)}" fill="${shade(rim, 0.3)}"/>`;
+  // brilho do aro cromado
+  s += `<path d="M${f1(cx - rr * 0.7)} ${f1(cy - rr * 0.3)} A${f1(rr)} ${f1(rr)} 0 0 1 ${f1(cx + rr * 0.3)} ${f1(cy - rr * 0.95)}" stroke="#fff" stroke-opacity=".45" stroke-width=".9" fill="none"/>`;
   return s;
 }
 
 /* ------------------------- Gerador do SVG do carro ------------------------- */
 
+let _U = '';
 /**
  * Gera o SVG de um nível. O mesmo SVG é usado na garagem (img), na pista
- * (canvas) e nos popups/coleção.
+ * (canvas, via bitmap) e nos popups/coleção.
+ * Importante: a roda fica em y = 70 − raio×(1 + 0,07×estágio) — a pista
+ * desenha os raios girando nessa mesma posição.
  */
-let _U = '';
 function carSVG(level) {
   _U = 'L' + level;
   const info = carInfo(level);
   const m = info.model, t = info.tier, sh = m.shape, p = m.paint[t];
   const ground = 70;
-  const drop = t * 1.6;                       // rebaixamento
-  const wr = sh.wheels[2] * (1 + 0.07 * t);   // rodas maiores
+  const drop = m.id === 'ice' ? 0 : t * 1.6;        // rebaixamento (o Ice é alto de propósito)
+  const wr = sh.wheels[2] * (1 + 0.07 * t);         // rodas maiores a cada estágio
   const wy = ground - wr;
   const R = sh.round;
   const B = sh.belly + drop;
   const y = (v) => v + drop;
+  const mid = (y(sh.deck[1]) + B) / 2;              // meia altura da lateral
+  const pillarX = (sh.roof[0] + sh.roof[1]) / 2 + 4;
+  const ctx = { m, t, p, sh, y, B, mid, wr, wy, pillarX };
 
-  // Perfil da carroceria
-  const pts = [
+  const body = roundedPath([
     [sh.x0 + 1, B, 4],
     [sh.x0, y(sh.tail), 6 * R],
     [sh.deck[0], y(sh.deck[1]), 7 * R],
@@ -232,223 +238,287 @@ function carSVG(level) {
     [sh.x1 - 5, y(sh.nose), 6 * R],
     [sh.x1, y(sh.nose) + 6, 4 * R],
     [sh.x1 - 2, B, 3],
-  ];
-  const body = roundedPath(pts);
-
-  // Vidros (estufa)
-  const gl = roundedPath([
+  ]);
+  const glass = roundedPath([
     [sh.deck[0] + 5, y(sh.deck[1]) - 0.5, 3],
     [sh.roof[0] + 2.5, y(sh.roof[2]) + 3, 5 * R],
     [sh.roof[1] - 1, y(sh.roof[2]) + 3, 4 * R],
     [sh.wind[0] - 5, y(sh.wind[1]) - 0.5, 2],
   ]);
-  const pillarX = (sh.roof[0] + sh.roof[1]) / 2 + 4;
 
   let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 80" width="160" height="80">`;
   s += `<defs>
-    <filter id="glow${_U}" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.6"/></filter>
+    <filter id="glow${_U}" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.5"/></filter>
     <filter id="blur${_U}" x="-50%" y="-200%" width="200%" height="500%"><feGaussianBlur stdDeviation="3.2"/></filter>
     <linearGradient id="paint${_U}" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="${shade(p.body, 0.28)}"/>
-      <stop offset=".45" stop-color="${p.body}"/>
-      <stop offset="1" stop-color="${shade(p.body, -0.45)}"/>
+      <stop offset="0" stop-color="${shade(p.body, m.id === 'ice' ? 0.12 : 0.3)}"/>
+      <stop offset=".42" stop-color="${p.body}"/>
+      <stop offset="1" stop-color="${shade(p.body, -0.5)}"/>
     </linearGradient>
     <linearGradient id="glass${_U}" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#3a6fa8"/><stop offset=".5" stop-color="#0d2140"/><stop offset="1" stop-color="#1b4a7a"/>
+      <stop offset="0" stop-color="${t ? '#2a4c78' : '#3a6fa8'}"/><stop offset=".5" stop-color="${t ? '#081428' : '#0d2140'}"/><stop offset="1" stop-color="${t ? '#163a62' : '#1b4a7a'}"/>
+    </linearGradient>
+    <linearGradient id="chrome${_U}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/><stop offset=".45" stop-color="#b7bec7"/><stop offset=".55" stop-color="#6d747d"/><stop offset="1" stop-color="#d7dce2"/>
     </linearGradient>
     <linearGradient id="flame${_U}" x1="1" y1="0" x2="0" y2="0">
-      <stop offset="0" stop-color="#ffffff"/><stop offset=".25" stop-color="#7ff6ff"/><stop offset=".6" stop-color="${p.acc}"/><stop offset="1" stop-color="${p.acc}" stop-opacity="0"/>
+      <stop offset="0" stop-color="#ffffff"/><stop offset=".25" stop-color="#bff6ff"/><stop offset=".6" stop-color="#3fa9ff"/><stop offset="1" stop-color="#3fa9ff" stop-opacity="0"/>
     </linearGradient>
   </defs>`;
 
-  // Sombra no chão
+  // Sombra e neon embaixo do carro (Tuned discreto, Furious forte)
   s += `<ellipse cx="${(sh.x0 + sh.x1) / 2}" cy="${ground + 1}" rx="${(sh.x1 - sh.x0) / 2}" ry="3.2" fill="#000" opacity=".55"/>`;
+  if (t >= 1) s += `<ellipse cx="${(sh.x0 + sh.x1) / 2}" cy="${ground - 1}" rx="${(sh.x1 - sh.x0) / 2 - 8}" ry="${t === 2 ? 4.2 : 3}" fill="${p.acc}" opacity="${t === 2 ? 0.85 : 0.35}" filter="url(#blur${_U})"/>`;
 
-  // Furious: neon embaixo do carro
+  s += behindSVG(ctx);              // foguete, turbina e asas (atrás da lataria)
+
+  // Chama de nitro saindo do escapamento (Furious)
   if (t === 2) {
-    s += `<ellipse cx="${(sh.x0 + sh.x1) / 2}" cy="${ground - 1}" rx="${(sh.x1 - sh.x0) / 2 - 6}" ry="4" fill="${p.acc}" opacity=".9" filter="url(#blur${_U})"/>`;
-  }
-
-  // Foguete do Fiero (atrás da carroceria)
-  if (m.special === 'rocket' && t >= 1) {
-    const ry = y(sh.roof[2]) - (t === 2 ? 9 : 6), rl = t === 2 ? 58 : 40, rx = sh.roof[0] - (t === 2 ? 24 : 12);
-    if (t === 2) s += `<path d="M${rx} ${ry} l-20 -3 l0 9 Z" fill="url(#flame${_U})" filter="url(#glow${_U})"/>`;
-    s += `<rect x="${rx}" y="${ry - 3.5}" width="${rl}" height="7" rx="3.5" fill="#d9dde2" stroke="#555" stroke-width=".6"/>`;
-    s += `<path d="M${rx + rl} ${ry - 3.5} q8 3.5 0 7 Z" fill="${p.acc}"/>`;
-    s += `<rect x="${rx + 6}" y="${ry - 1}" width="${rl - 16}" height="2" fill="${p.body}"/>`;
-    s += `<path d="M${rx + 2} ${ry + 3.5} l4 6 l4 -6 Z" fill="#888"/>`;
-  }
-
-  // Chamas de nitro (Furious) saindo do escapamento
-  if (t === 2) {
-    s += `<path d="M${sh.x0 + 2} ${B - 4} l-14 -3 l4 3 l-6 2 l16 1 Z" fill="url(#flame${_U})" filter="url(#glow${_U})"/>`;
+    s += `<path d="M${sh.x0 + 2} ${B - 4} l-15 -3 l4 3 l-6 2 l17 1 Z" fill="url(#flame${_U})" filter="url(#glow${_U})"/>`;
     s += `<path d="M${sh.x0 + 2} ${B - 4} l-9 -1.5 l9 3 Z" fill="#fff"/>`;
   }
 
-  // Carroceria
-  s += `<path d="${body}" fill="url(#paint${_U})" stroke="${shade(p.body, -0.6)}" stroke-width=".8"/>`;
+  // Lataria
+  s += `<path d="${body}" fill="url(#paint${_U})" stroke="${shade(p.body, -0.65)}" stroke-width=".8"/>`;
+  // Alargadores de para-lama (widebody)
+  if (m.widebody && t >= 1) s += flaresSVG(ctx);
+  // Reflexos: ombro da lataria e luz do asfalto molhado embaixo
+  s += `<path d="M${sh.x0 + 6} ${y(sh.tail) + 5} L${sh.deck[0]} ${y(sh.deck[1]) + 4} L${sh.wind[0] + 4} ${y(sh.wind[1]) + 4} L${sh.x1 - 8} ${y(sh.nose) + 4}" fill="none" stroke="#fff" stroke-opacity="${m.id === 'ice' ? 0.1 : 0.24}" stroke-width="1.6" stroke-linecap="round"/>`;
+  s += `<path d="M${sh.x0 + 4} ${B - 2.5} L${sh.x1 - 4} ${B - 2.5}" stroke="${t === 2 ? p.acc : '#8fc8ff'}" stroke-opacity="${t === 2 ? 0.5 : 0.2}" stroke-width="1.2" stroke-linecap="round"/>`;
 
-  // Reflexo no ombro da lataria
-  s += `<path d="M${sh.x0 + 6} ${y(sh.tail) + 5} L${sh.deck[0]} ${y(sh.deck[1]) + 4} L${sh.wind[0] + 4} ${y(sh.wind[1]) + 4} L${sh.x1 - 8} ${y(sh.nose) + 4}" fill="none" stroke="#fff" stroke-opacity=".22" stroke-width="1.6" stroke-linecap="round"/>`;
+  s += liverySVG(ctx);              // pintura e grafismo de cada filme
 
-  // Luz refletida do asfalto na parte de baixo da lataria
-  s += `<path d="M${sh.x0 + 4} ${B - 2.5} L${sh.x1 - 4} ${B - 2.5}" stroke="${t === 2 ? p.acc : '#8fc8ff'}" stroke-opacity="${t === 2 ? 0.55 : 0.22}" stroke-width="1.2" stroke-linecap="round"/>`;
-  if (t === 0) s += `<rect x="${sh.x0 + 1}" y="${y(sh.tail) + 8}" width="2.5" height="5" rx=".6" fill="#e8eef6" stroke="#333" stroke-width=".4"/>`;
-
-  // Adesivos / faixas por estágio
-  s += vinylSVG(m, t, p, sh, y, B);
-
-  // Vidros
-  s += `<path d="${gl}" fill="url(#glass${_U})" stroke="${shade(p.body, -0.6)}" stroke-width=".7"/>`;
-  s += `<path d="M${sh.roof[0] + 6} ${y(sh.roof[2]) + 4.5} L${sh.roof[0] + 14} ${y(sh.roof[2]) + 4.5} L${sh.roof[0] + 4} ${y(sh.deck[1]) - 2} Z" fill="#fff" opacity=".18"/>`;
+  // Vidros (escurecidos no Tuned/Furious)
+  s += `<path d="${glass}" fill="url(#glass${_U})" stroke="${shade(p.body, -0.6)}" stroke-width=".7"/>`;
+  s += `<path d="M${sh.roof[0] + 6} ${y(sh.roof[2]) + 4.5} L${sh.roof[0] + 14} ${y(sh.roof[2]) + 4.5} L${sh.roof[0] + 4} ${y(sh.deck[1]) - 2} Z" fill="#fff" opacity=".16"/>`;
   s += `<line x1="${pillarX}" y1="${y(sh.roof[2]) + 2.5}" x2="${pillarX + 2}" y2="${y(sh.deck[1]) + 0.5}" stroke="${shade(p.body, -0.5)}" stroke-width="2.2"/>`;
 
-  // Linhas de porta, maçaneta, saia
+  // Portas, maçaneta, saia lateral
   const doorX = pillarX + 3;
-  s += `<path d="M${doorX} ${y(sh.deck[1]) + 1} L${doorX + 1} ${B - 3}" stroke="${shade(p.body, -0.55)}" stroke-width=".7" fill="none"/>`;
-  s += `<path d="M${sh.wind[0] - 6} ${y(sh.wind[1]) + 1} L${sh.wind[0] - 4} ${B - 3}" stroke="${shade(p.body, -0.55)}" stroke-width=".7" fill="none"/>`;
-  s += `<rect x="${doorX + 5}" y="${y(sh.deck[1]) + 5}" width="5" height="1.4" rx=".7" fill="${shade(p.body, -0.5)}"/>`;
-  if (t >= 1) s += `<path d="M${sh.wheels[0] + wr + 2} ${B - 1} L${sh.wheels[1] - wr - 2} ${B - 1}" stroke="${t === 2 ? p.acc : '#111'}" stroke-width="2.4" stroke-linecap="round"/>`;
+  const lineC = shade(p.body, -0.6);
+  s += `<path d="M${doorX} ${y(sh.deck[1]) + 1} L${doorX + 1} ${B - 3}" stroke="${lineC}" stroke-width=".7" fill="none"/>`;
+  s += `<path d="M${sh.wind[0] - 6} ${y(sh.wind[1]) + 1} L${sh.wind[0] - 4} ${B - 3}" stroke="${lineC}" stroke-width=".7" fill="none"/>`;
+  s += `<rect x="${doorX + 5}" y="${y(sh.deck[1]) + 5}" width="5" height="1.4" rx=".7" fill="${lineC}"/>`;
+  if (t >= 1) s += `<path d="M${sh.wheels[0] + wr + 3} ${B - 1} L${sh.wheels[1] - wr - 3} ${B - 1}" stroke="${shade(p.body, -0.7)}" stroke-width="2.4" stroke-linecap="round"/>`;
 
-  // Farol e lanterna
+  // Faróis e lanternas
   s += `<path d="M${sh.x1 - 7} ${y(sh.nose) + 2} l6 1.5 l-.5 3 l-6 -1 Z" fill="#fff8d0"/>`;
   s += `<rect x="${sh.x0 - 0.5}" y="${y(sh.tail) + 2}" width="4" height="4" rx="1" fill="#ff2a3d"/>`;
   if (t >= 1) s += `<rect x="${sh.x0 - 1}" y="${y(sh.tail) + 2}" width="5" height="4" rx="1" fill="#ff2a3d" filter="url(#glow${_U})"/>`;
-  if (t === 2) s += `<path d="M${sh.x1 - 2} ${y(sh.nose) + 4} l14 -2 l0 6 Z" fill="#fffbe0" opacity=".35" filter="url(#glow${_U})"/>`;
+  if (t === 2) s += `<path d="M${sh.x1 - 2} ${y(sh.nose) + 4} l16 -2.5 l0 7 Z" fill="#fffbe0" opacity=".35" filter="url(#glow${_U})"/>`;
 
-  // Detalhes exclusivos do modelo
-  s += specialSVG(m, t, p, sh, y, B);
-
-  // Aerofólio genérico do Tuned/Furious (quando o modelo não tem um próprio)
-  if (!['hoopWing', 'tallWing'].includes(m.special)) {
-    if (t === 1) s += `<path d="M${sh.x0 + 2} ${y(sh.tail) - 0.5} l12 -1 l-1 2.5 l-11 .5 Z" fill="${shade(p.body, -0.4)}"/>`;
-    if (t === 2) s += gtWing(sh.x0 + 3, y(sh.tail), 22, 10, p);
-  }
-
-  // Furious: contorno neon da lataria
-  if (t === 2) {
-    s += `<path d="${body}" fill="none" stroke="${p.acc}" stroke-width="1.3" opacity=".9" filter="url(#glow${_U})"/>`;
-    s += `<path d="${body}" fill="none" stroke="${p.acc}" stroke-width=".5" opacity=".9"/>`;
-  }
+  s += frontSVG(ctx);               // capô, compressor, LEDs, blindagem...
 
   // Caixas de roda + rodas
   for (const wx of [sh.wheels[0], sh.wheels[1]]) {
-    s += `<circle cx="${wx}" cy="${wy}" r="${wr + 2.2}" fill="#07070a"/>`;
-    s += wheelSVG(wx, wy, wr, m.rims[t], t, p.acc);
+    s += `<circle cx="${wx}" cy="${f1(wy)}" r="${f1(wr + 2.2)}" fill="#07070a"/>`;
+    s += wheelSVG(wx, +f1(wy), +f1(wr), m, t, p);
   }
-  // Pneus com cravos de gelo (Charger Ice Furious)
-  if (m.special === 'iceArmor' && t === 2) {
-    for (const wx of [sh.wheels[0], sh.wheels[1]]) {
-      for (let i = 0; i < 10; i++) {
-        const a = (i / 10) * Math.PI * 2;
-        s += `<circle cx="${(wx + Math.cos(a) * (wr - 0.6)).toFixed(1)}" cy="${(wy + Math.sin(a) * (wr - 0.6)).toFixed(1)}" r=".9" fill="#dff8ff"/>`;
-      }
+  // Pneus com cravos para o gelo
+  if (m.id === 'ice' && t >= 1) {
+    for (const wx of [sh.wheels[0], sh.wheels[1]]) for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      s += `<circle cx="${f1(wx + Math.cos(a) * (wr - 0.6))}" cy="${f1(wy + Math.sin(a) * (wr - 0.6))}" r="${t === 2 ? 1 : 0.7}" fill="#e6f6ff"/>`;
     }
   }
-
-  s += `</svg>`;
-  return s;
+  return s + `</svg>`;
 }
 
-/** Aerofólio estilo GT (dois suportes + lâmina). */
-function gtWing(x, baseY, w, h, p) {
-  const top = baseY - h;
-  return `<path d="M${x + 5} ${baseY + 1} L${x + 7} ${top + 2} M${x + w - 6} ${baseY + 1} L${x + w - 4} ${top + 2}" stroke="#16161b" stroke-width="2"/>` +
-    `<path d="M${x - 2} ${top} L${x + w + 2} ${top - 1.5} L${x + w + 1} ${top + 3} L${x - 2} ${top + 3.5} Z" fill="#111" stroke="${p.acc}" stroke-width=".8"/>` +
-    `<path d="M${x - 3} ${top - 2} l0 7 l2 0 l0 -7 Z" fill="${p.acc}"/>`;
-}
-
-/** Faixas, adesivos e grafismos de cada estágio. */
-function vinylSVG(m, t, p, sh, y, B) {
+/** Arcos alargados sobre as rodas (kits widebody). */
+function flaresSVG({ m, t, p, sh, B, wr }) {
+  const k = m.widebody === 2 ? 5.5 : 4.5;
   let s = '';
-  const midY = (y(sh.deck[1]) + B) / 2;
-  if (m.special === 'gtrStripes' && t >= 1) {
-    s += `<path d="M${sh.x0 + 4} ${midY + 3} L${sh.x1 - 6} ${midY - 1} L${sh.x1 - 6} ${midY + 1.5} L${sh.x0 + 4} ${midY + 5.5} Z" fill="${p.vinyl}" opacity=".95"/>`;
-    s += `<path d="M${sh.x0 + 4} ${midY + 7} L${sh.x1 - 10} ${midY + 3} L${sh.x1 - 10} ${midY + 4.2} L${sh.x0 + 4} ${midY + 8.2} Z" fill="${p.vinyl}" opacity=".75"/>`;
-  } else if (m.special === 'twinStripes') {
-    // Faixas duplas laterais clássicas (todas as evoluções)
-    s += `<rect x="${sh.x0 + 6}" y="${midY - 1}" width="${sh.x1 - sh.x0 - 14}" height="2.4" fill="${p.vinyl}"/>`;
-    s += `<rect x="${sh.x0 + 6}" y="${midY + 3}" width="${sh.x1 - sh.x0 - 14}" height="2.4" fill="${p.vinyl}"/>`;
-    s += `<circle cx="${(sh.roof[0] + sh.roof[1]) / 2 + 12}" cy="${midY + 2.2}" r="${t === 0 ? 4.2 : 4.8}" fill="#fff" stroke="${p.vinyl}" stroke-width="1"/>`;
-    s += `<text x="${(sh.roof[0] + sh.roof[1]) / 2 + 12}" y="${midY + 4}" font-family="Arial" font-weight="bold" font-size="5" text-anchor="middle" fill="#111">${t + 1}</text>`;
-  } else if (m.special === 'driftVinyl' && t >= 1) {
-    // Pintura dividida laranja/preto
-    s += `<path d="M${sh.x0 + 3} ${B - 1} L${sh.x0 + 18} ${midY - 2} L${sh.x1 - 30} ${midY + 2} L${sh.x1 - 12} ${B - 1} Z" fill="${p.vinyl}" opacity=".92"/>`;
-    if (t === 2) s += `<path d="M${sh.x0 + 24} ${midY + 1} q12 -8 24 0 t24 0 t24 0" fill="none" stroke="${p.acc}" stroke-width="1.4" filter="url(#glow${_U})"/>`;
-  } else if (t === 1) {
-    s += `<path d="M${sh.x0 + 4} ${midY + 2} L${sh.x1 - 6} ${midY - 2} L${sh.x1 - 6} ${midY + 1.6} L${sh.x0 + 4} ${midY + 5.6} Z" fill="${p.vinyl}" opacity=".9"/>`;
-  }
-  if (t === 2 && m.special !== 'twinStripes' && m.special !== 'driftVinyl') {
-    // Grafismo em zigue-zague (tipo "tribal" / raio)
-    const x0 = sh.x0 + 8, x1 = sh.x1 - 18, n = 6, w = (x1 - x0) / n;
-    let d = `M${x0} ${midY + 4}`;
-    for (let i = 0; i < n; i++) d += ` L${x0 + w * (i + 0.5)} ${midY - 2 + (i % 2) * 2} L${x0 + w * (i + 1)} ${midY + 4}`;
-    d += ` L${x1 + 6} ${midY + 1} L${x1} ${midY + 7} L${x0} ${midY + 7} Z`;
-    s += `<path d="${d}" fill="${p.vinyl}" opacity=".9"/>`;
-    s += `<path d="${d}" fill="none" stroke="${p.vinyl}" stroke-width="1" filter="url(#glow${_U})" opacity=".8"/>`;
+  for (const wx of [sh.wheels[0], sh.wheels[1]]) {
+    const r = wr + k;
+    s += `<path d="M${f1(wx - r)} ${B} L${f1(wx - r)} ${f1(B - 2)} A${f1(r)} ${f1(r)} 0 0 1 ${f1(wx + r)} ${f1(B - 2)} L${f1(wx + r)} ${B} Z" fill="url(#paint${_U})" stroke="${shade(p.body, -0.65)}" stroke-width=".8"/>`;
+    if (m.id === 'ice') s += `<path d="M${f1(wx - r)} ${f1(B - 2)} A${f1(r)} ${f1(r)} 0 0 1 ${f1(wx + r)} ${f1(B - 2)}" fill="none" stroke="#1c1f23" stroke-width="2"/>`;
+    if (t === 2 && m.id === 'rx7') s += `<path d="M${f1(wx - r + 2)} ${f1(B - 3)} A${f1(r - 2)} ${f1(r - 2)} 0 0 1 ${f1(wx + r - 2)} ${f1(B - 3)}" fill="none" stroke="#fff" stroke-opacity=".25" stroke-width="1"/>`;
   }
   return s;
 }
 
-/** Detalhes que deixam cada modelo único. */
-function specialSVG(m, t, p, sh, y, B) {
+/** Peças que ficam atrás da lataria: asas, foguete, turbina. */
+function behindSVG({ m, t, p, sh, y }) {
   let s = '';
-  const deckY = y(sh.deck[1]);
-  switch (m.special) {
-    case 'hoopWing': { // aerofólio em arco
-      if (t === 0) { s += `<path d="M${sh.x0 + 2} ${y(sh.tail) - 1} l14 -1.5 l0 2.5 l-14 1 Z" fill="${shade(p.body, -0.35)}"/>`; break; }
-      const x = sh.x0 + 3, w = 26, h = t === 2 ? 11 : 8;
-      s += `<path d="M${x + 1} ${y(sh.tail) + 1} Q${x - 1} ${y(sh.tail) - h} ${x + 8} ${y(sh.tail) - h} L${x + w - 6} ${y(sh.tail) - h - 1} Q${x + w} ${y(sh.tail) - h} ${x + w - 1} ${deckY + 1}" fill="none" stroke="${t === 2 ? '#111' : shade(p.body, -0.25)}" stroke-width="3.2" stroke-linecap="round"/>`;
-      if (t === 2) s += `<path d="M${x + 8} ${y(sh.tail) - h - 0.2} L${x + w - 6} ${y(sh.tail) - h - 1.2}" stroke="${p.acc}" stroke-width="1.2" filter="url(#glow${_U})"/>`;
-      break;
-    }
-    case 'tallWing': { // asa altíssima + bico pontudo
-      const h = 14 + t * 3, x = sh.x0 + 5;
-      s += `<path d="M${x + 3} ${y(sh.tail) + 1} L${x + 1} ${y(sh.tail) - h} M${x + 18} ${deckY + 1} L${x + 17} ${y(sh.tail) - h}" stroke="${shade(p.body, -0.15)}" stroke-width="3"/>`;
-      s += `<path d="M${x - 3} ${y(sh.tail) - h - 2} L${x + 22} ${y(sh.tail) - h - 3} L${x + 22} ${y(sh.tail) - h + 1} L${x - 3} ${y(sh.tail) - h + 2} Z" fill="${t === 2 ? '#111' : p.body}" stroke="${p.acc}" stroke-width=".9"/>`;
-      s += `<path d="M${sh.x1 - 14} ${y(sh.nose) + 1} L${sh.x1 + 1} ${y(sh.nose) + 5} L${sh.x1 - 14} ${y(sh.nose) + 8} Z" fill="${shade(p.body, -0.2)}"/>`;
-      if (t >= 1) s += `<rect x="${sh.x0 + 10}" y="${(deckY + B) / 2 - 1}" width="40" height="3" fill="${p.vinyl}"/>`;
-      break;
-    }
-    case 'rally': { // tomada de ar no capô, luzes de rali, para-barro
-      s += `<path d="M${sh.wind[0] + 4} ${y(sh.wind[1]) + 0.5} l3 -3 l10 0.6 l1 3 Z" fill="${shade(p.body, -0.3)}"/>`;
-      s += `<path d="M${sh.wheels[0] - 6} ${B - 1} l-1 7 l4 0 l0 -7 Z" fill="#c42a2a"/>`;
-      if (t >= 1) {
-        s += `<circle cx="${sh.x1 - 12}" cy="${y(sh.nose) + 9}" r="2.6" fill="#fff5b0" stroke="#222" stroke-width=".7"/>`;
-        s += `<circle cx="${sh.x1 - 18}" cy="${y(sh.nose) + 9}" r="2.6" fill="#fff5b0" stroke="#222" stroke-width=".7"/>`;
-      }
-      if (t === 2) s += `<rect x="${sh.roof[0] + 6}" y="${y(sh.roof[2]) - 3.5}" width="24" height="3" rx="1.5" fill="#222" stroke="${p.acc}" stroke-width=".7"/>` +
-        `<circle cx="${sh.roof[0] + 11}" cy="${y(sh.roof[2]) - 2}" r="1.3" fill="#fff8c0" filter="url(#glow${_U})"/><circle cx="${sh.roof[0] + 18}" cy="${y(sh.roof[2]) - 2}" r="1.3" fill="#fff8c0" filter="url(#glow${_U})"/><circle cx="${sh.roof[0] + 25}" cy="${y(sh.roof[2]) - 2}" r="1.3" fill="#fff8c0" filter="url(#glow${_U})"/>`;
-      break;
-    }
-    case 'twinStripes': { // tampa traseira com grade (motor central)
-      for (let i = 0; i < 4; i++) s += `<line x1="${sh.x0 + 8 + i * 5}" y1="${deckY + 1}" x2="${sh.x0 + 10 + i * 5}" y2="${deckY - 1.2}" stroke="#111" stroke-width="1"/>`;
-      break;
-    }
-    case 'hyperLeds': { // faróis em LED, entradas de ar laterais
-      s += `<path d="M${sh.x1 - 22} ${y(sh.nose) + 1} L${sh.x1 - 3} ${y(sh.nose) + 3.5}" stroke="${t === 0 ? '#e8f4ff' : p.acc}" stroke-width="1.2" ${t >= 1 ? 'filter="url(#glow${_U})"' : ''}/>`;
-      s += `<path d="M${sh.x0 + 22} ${B - 4} L${sh.x0 + 40} ${deckY + 5} L${sh.x0 + 44} ${B - 4} Z" fill="#0d0d10"/>`;
-      if (t >= 1) s += `<path d="M${sh.wind[0] + 4} ${y(sh.wind[1]) + 0.6} l18 2" stroke="#111" stroke-width="1.6"/>`;
-      break;
-    }
-    case 'iceArmor': { // placas de blindagem e gelo
-      if (t >= 1) s += `<path d="M${sh.x1 - 3} ${B} l6 -2 l0 -8 l-6 -1 Z" fill="#3b4148" stroke="${p.acc}" stroke-width=".6"/>`;
-      if (t >= 1) for (let i = 0; i < 5; i++) s += `<path d="M${sh.x0 + 20 + i * 18} ${B - 1} l3 5 l3 -5 Z" fill="#bff4ff" opacity=".9"/>`;
-      if (t === 2) s += `<path d="M${sh.wind[0] + 2} ${y(sh.wind[1])} l8 -4 l2 4 l6 -3 l1 4" fill="none" stroke="#e9fbff" stroke-width="1.2" filter="url(#glow${_U})"/>` +
-        `<rect x="${sh.roof[0] + 4}" y="${y(sh.roof[2]) - 4}" width="22" height="4" rx="1" fill="#3b4148"/>`;
-      break;
-    }
-    case 'rocket': { // escapamento grande
-      if (t >= 1) s += `<rect x="${sh.x0 - 3}" y="${B - 6}" width="7" height="3" rx="1.5" fill="#999"/>`;
-      break;
-    }
-    case 'blower': { // compressor saindo do capô
+  const tailY = y(sh.tail), deckY = y(sh.deck[1]);
+  if (m.wing === 'hoop' && t >= 1) {
+    // asa em arco que começa e termina na tampa traseira
+    const x = sh.x0 + 3, w = 28, h = t === 2 ? 12 : 8, col = '#151518';
+    s += `<path d="M${x + 1} ${tailY + 1} Q${x - 1} ${tailY - h} ${x + 8} ${tailY - h} L${x + w - 6} ${tailY - h - 1} Q${x + w} ${tailY - h} ${x + w - 1} ${deckY + 1}" fill="none" stroke="${col}" stroke-width="${t === 2 ? 3.6 : 3}" stroke-linecap="round"/>`;
+  }
+  if (m.wing === 'gt') {
+    const x = sh.x0 + 3, h = [3, 7, 10][t], w = [16, 20, 23][t];
+    s += `<path d="M${x + 5} ${tailY + 1} L${x + 6} ${tailY - h + 1} M${x + w - 5} ${deckY + 1} L${x + w - 4} ${tailY - h + 1}" stroke="#16161b" stroke-width="2"/>`;
+    s += `<path d="M${x - 1} ${tailY - h} L${x + w + 1} ${tailY - h - 1.5} L${x + w} ${tailY - h + 2.5} L${x - 1} ${tailY - h + 3} Z" fill="${t === 2 ? '#141418' : shade(p.body, -0.2)}"/>`;
+  }
+  if (m.wing === 'veilside' && t >= 1) {
+    // asa larga e baixa, apoiada em dois pilares
+    const x = sh.x0 + 2, h = t === 2 ? 9 : 6;
+    s += `<path d="M${x + 6} ${tailY + 1} L${x + 5} ${tailY - h + 1} M${x + 20} ${deckY + 1} L${x + 21} ${tailY - h + 1}" stroke="#101012" stroke-width="2.4"/>`;
+    s += `<path d="M${x - 3} ${tailY - h - 1} Q${x + 12} ${tailY - h - 4} ${x + 29} ${tailY - h - 1} L${x + 28} ${tailY - h + 2} Q${x + 12} ${tailY - h} ${x - 3} ${tailY - h + 2} Z" fill="${p.livery}"/>`;
+  }
+  if (m.wing === 'sti') {
+    // aerofólio alto de fábrica, maior a cada estágio
+    const x = sh.x0 + 1, h = [4, 6, 8][t];
+    s += `<path d="M${x + 3} ${tailY + 1} L${x + 3} ${tailY - h + 1} M${x + 11} ${tailY + 2} L${x + 12} ${tailY - h + 1}" stroke="${shade(p.body, -0.3)}" stroke-width="2"/>`;
+    s += `<path d="M${x - 2} ${tailY - h} L${x + 16} ${tailY - h - 1} L${x + 16} ${tailY - h + 2} L${x - 2} ${tailY - h + 2.5} Z" fill="${t === 2 ? p.livery : shade(p.body, -0.15)}"/>`;
+  }
+  if (m.wing === 'daytona') {
+    // asa altíssima característica, cresce a cada estágio
+    const h = 14 + t * 2.5, x = sh.x0 + 5;
+    s += `<path d="M${x + 3} ${tailY + 1} L${x + 1} ${tailY - h} M${x + 18} ${deckY + 1} L${x + 17} ${tailY - h}" stroke="url(#paint${_U})" stroke-width="3"/>`;
+    s += `<path d="M${x - 3} ${tailY - h - 2} L${x + 22} ${tailY - h - 3} L${x + 22} ${tailY - h + 1} L${x - 3} ${tailY - h + 2} Z" fill="${t === 2 ? p.livery : p.body}" stroke="${shade(p.body, -0.6)}" stroke-width=".6"/>`;
+  }
+  if (m.id === 'fiero' && t >= 1) {
+    // foguete preso no teto
+    const ry = y(sh.roof[2]) - (t === 2 ? 9 : 6), rl = t === 2 ? 62 : 42, rx = sh.roof[0] - (t === 2 ? 26 : 12);
+    if (t === 2) s += `<path d="M${rx} ${ry} l-24 -3.5 l5 3.5 l-5 3.5 Z" fill="url(#flame${_U})" filter="url(#glow${_U})"/>`;
+    s += `<rect x="${rx}" y="${ry - 4}" width="${rl}" height="8" rx="4" fill="url(#chrome${_U})" stroke="#4a4f56" stroke-width=".6"/>`;
+    s += `<path d="M${rx + rl} ${ry - 4} q9 4 0 8 Z" fill="#e9ecef" stroke="#4a4f56" stroke-width=".5"/>`;
+    s += `<rect x="${rx + 8}" y="${ry - 1}" width="${rl - 18}" height="2" fill="${p.body}"/>`;
+    s += `<path d="M${rx + 2} ${ry - 4} l-3 -4 l7 0 Z M${rx + 2} ${ry + 4} l-3 4 l7 0 Z" fill="#6a7078"/>`;
+    s += `<path d="M${rx + rl * 0.35} ${ry + 4} l2 ${y(sh.roof[2]) - ry - 3} M${rx + rl * 0.7} ${ry + 4} l-2 ${y(sh.roof[2]) - ry - 3}" stroke="#30343a" stroke-width="1.6"/>`;
+  }
+  if (m.id === 'ice' && t === 2) {
+    // turbina saindo da traseira
+    const tx = sh.x0 - 6, ty = y(sh.tail) + 4;
+    s += `<rect x="${tx}" y="${ty - 5}" width="16" height="10" rx="5" fill="url(#chrome${_U})" stroke="#2a2e33" stroke-width=".7"/>`;
+    s += `<ellipse cx="${tx + 1}" cy="${ty}" rx="2.4" ry="4.6" fill="#111"/><ellipse cx="${tx + 1}" cy="${ty}" rx="1.4" ry="3" fill="${p.acc}" filter="url(#glow${_U})"/>`;
+  }
+  return s;
+}
+
+/** Pintura/grafismos inspirados em cada filme (sem textos nem logos). */
+function liverySVG({ m, t, p, sh, y, B, mid, pillarX }) {
+  const L = p.livery, x0 = sh.x0, x1 = sh.x1;
+  let s = '';
+  switch (m.id) {
+    case 'supra': {
+      // grafismo tribal escuro: lâminas pontudas da traseira até a porta
       if (t === 0) break;
-      const bx = sh.wind[0] + 8, by = y(sh.wind[1]) + 0.5, bh = t === 2 ? 11 : 7;
-      s += `<rect x="${bx}" y="${by - bh}" width="13" height="${bh}" rx="1.5" fill="#bfc5cc" stroke="#555" stroke-width=".6"/>`;
-      for (let i = 1; i < 4; i++) s += `<line x1="${bx + 1}" y1="${by - bh + i * bh / 4}" x2="${bx + 12}" y2="${by - bh + i * bh / 4}" stroke="#7a8088" stroke-width=".8"/>`;
-      s += `<rect x="${bx - 1.5}" y="${by - bh - 4}" width="16" height="4" rx="1.5" fill="${t === 2 ? p.acc : '#2a2a2a'}"/>`;
-      if (t === 2) s += `<path d="M${bx + 3} ${by - bh - 4} q-2 -6 3 -9 q-1 5 3 6 q2 -4 1 -7 q5 4 2 10 Z" fill="${p.acc}" opacity=".9" filter="url(#glow${_U})"/>`;
+      const blades = t === 1
+        ? [[x0 + 10, mid + 5, x0 + 52, mid - 4, 4]]
+        : [[x0 + 8, mid + 6, x0 + 70, mid - 8, 5.5], [x0 + 22, mid + 9, x0 + 84, mid + 1, 3.5], [x0 + 6, mid - 1, x0 + 40, mid - 7, 3]];
+      for (const [ax, ay, bx, by, w] of blades) {
+        s += `<path d="M${ax} ${ay} Q${(ax + bx) / 2} ${by - w * 0.4} ${bx} ${by} Q${(ax + bx) / 2 - 4} ${by + w * 1.4} ${ax + 3} ${ay + w} Z" fill="${L}"/>`;
+      }
+      if (t === 2) s += `<path d="M${x1 - 30} ${mid + 6} Q${x1 - 18} ${mid + 1} ${x1 - 6} ${mid + 2} Q${x1 - 18} ${mid + 5} ${x1 - 28} ${mid + 9} Z" fill="${L}"/>`;
+      break;
+    }
+    case 'skyline': {
+      // ondas azuis atravessando a lateral
+      if (t === 0) { s += `<rect x="${x0 + 6}" y="${mid + 3}" width="${x1 - x0 - 14}" height="1.2" fill="${shade(p.body, -0.35)}"/>`; break; }
+      s += `<path d="M${x0 + 5} ${mid + 7} C${x0 + 40} ${mid - 6} ${x0 + 82} ${mid + 4} ${x1 - 10} ${mid - 5} L${x1 - 11} ${mid - 2} C${x0 + 84} ${mid + 7} ${x0 + 42} ${mid - 2} ${x0 + 6} ${mid + 10} Z" fill="${L}"/>`;
+      if (t === 2) {
+        s += `<path d="M${x0 + 18} ${mid + 11} C${x0 + 50} ${mid + 2} ${x0 + 86} ${mid + 10} ${x1 - 18} ${mid + 3} L${x1 - 19} ${mid + 4.6} C${x0 + 88} ${mid + 12} ${x0 + 52} ${mid + 4.5} ${x0 + 19} ${mid + 13} Z" fill="${shade(L, 0.3)}"/>`;
+        s += `<path d="M${x0 + 8} ${y(sh.tail) + 3} q14 -2 22 2 q-12 0 -22 3 Z" fill="${L}"/>`;
+      }
+      break;
+    }
+    case 'rx7': {
+      // pintura dividida: frente laranja, traseira e parte de baixo pretas
+      if (t === 0) break;
+      if (t === 1) { s += `<path d="M${x0 + 2} ${B - 1} L${x0 + 2} ${mid + 4} L${x1 - 6} ${mid + 6} L${x1 - 4} ${B - 1} Z" fill="${L}" opacity=".92"/>`; break; }
+      s += `<path d="M${x0 + 1} ${B - 1} L${x0} ${y(sh.tail) + 1} L${sh.deck[0] - 2} ${y(sh.deck[1]) + 1} L${sh.roof[0] + 8} ${y(sh.roof[2]) + 1} L${pillarX + 6} ${B - 1} Z" fill="${L}"/>`;
+      s += `<path d="M${pillarX + 6} ${B - 1} L${x1 - 4} ${B - 1} L${x1 - 6} ${mid + 7} L${pillarX + 4} ${mid + 7} Z" fill="${L}" opacity=".95"/>`;
+      break;
+    }
+    case 'impreza': {
+      // prata em cima, preto embaixo; capô escuro no Furious
+      if (t === 0) break;
+      s += `<path d="M${x0 + 2} ${B - 1} L${x0 + 1} ${mid + (t === 2 ? 1 : 6)} L${x1 - 4} ${mid + (t === 2 ? 1 : 6)} L${x1 - 2} ${B - 1} Z" fill="${L}" opacity=".95"/>`;
+      if (t === 2) s += `<path d="M${sh.wind[0] + 1} ${y(sh.wind[1]) + 0.4} L${x1 - 6} ${y(sh.nose) + 0.4} L${x1 - 5} ${y(sh.nose) + 2.5} L${sh.wind[0] + 1} ${y(sh.wind[1]) + 2.5} Z" fill="#1b1c20"/>`;
+      break;
+    }
+    case 'gt40': {
+      // faixas duplas brancas (todas as evoluções) e círculo de corrida
+      const th = [1.6, 2.2, 2.8][t];
+      s += `<rect x="${x0 + 6}" y="${mid - 2}" width="${x1 - x0 - 14}" height="${th}" fill="${L}"/>`;
+      s += `<rect x="${x0 + 6}" y="${mid + 2.2}" width="${x1 - x0 - 14}" height="${th}" fill="${L}"/>`;
+      s += `<path d="M${sh.roof[0] + 4} ${y(sh.roof[2]) + 0.6} L${sh.roof[1] - 2} ${y(sh.roof[2]) + 0.6}" stroke="${L}" stroke-width="1.4"/>`;
+      if (t >= 1) s += `<circle cx="${pillarX + 14}" cy="${mid + 1}" r="${t === 2 ? 5.6 : 4.6}" fill="${L}" stroke="${shade(p.body, -0.3)}" stroke-width=".6"/>`;
+      break;
+    }
+    case 'daytona': {
+      // faixa preta envolvendo a traseira
+      if (t === 0) break;
+      s += `<path d="M${x0 + 14} ${y(sh.tail) + 1} L${x0 + 22} ${y(sh.tail)} L${x0 + 22} ${B - 1} L${x0 + 14} ${B - 1} Z" fill="${L}"/>`;
+      if (t === 2) s += `<path d="M${x0 + 25} ${y(sh.tail)} L${x0 + 28} ${y(sh.tail)} L${x0 + 28} ${B - 1} L${x0 + 25} ${B - 1} Z" fill="${L}"/>`;
+      break;
+    }
+    case 'lykan': {
+      // saias e entradas de ar pretas, recorte agressivo
+      s += `<path d="M${x0 + 24} ${B - 3} L${x0 + 42} ${mid - 1} L${x0 + 47} ${B - 3} Z" fill="${L}"/>`;
+      if (t >= 1) s += `<path d="M${x0 + 4} ${B - 1} L${x0 + 4} ${B - 5} L${x1 - 8} ${B - 6} L${x1 - 4} ${B - 1} Z" fill="${L}" opacity=".9"/>`;
+      if (t === 2) s += `<path d="M${x0 + 30} ${mid + 1} L${x0 + 46} ${mid - 3}" stroke="${shade(p.body, 0.35)}" stroke-width=".8"/>`;
+      break;
+    }
+    case 'ice': {
+      // placas de blindagem com rebites
+      if (t === 0) break;
+      const plates = t === 1 ? [[x0 + 22, mid, 26, 7]] : [[x0 + 16, mid - 2, 30, 9], [x0 + 52, mid - 1, 34, 8], [x1 - 40, mid, 24, 7]];
+      for (const [px, py, pw, ph] of plates) {
+        s += `<rect x="${px}" y="${py}" width="${pw}" height="${ph}" rx="1" fill="${L}" stroke="#16191c" stroke-width=".6"/>`;
+        for (const rx of [px + 2, px + pw - 2]) for (const ry of [py + 1.6, py + ph - 1.6]) s += `<circle cx="${rx}" cy="${ry}" r=".6" fill="#8c949c"/>`;
+      }
+      break;
+    }
+    case 'fiero': {
+      if (t === 0) break;
+      s += `<rect x="${x0 + 4}" y="${mid + 2}" width="${x1 - x0 - 10}" height="${t === 2 ? 2.4 : 1.6}" fill="${L}"/>`;
+      break;
+    }
+    case 'charger': {
+      // teto de vinil preto fosco e frisos cromados
+      s += `<path d="M${sh.deck[0] + 4} ${y(sh.deck[1]) - 0.5} L${sh.roof[0] + 1} ${y(sh.roof[2]) - 0.4} L${sh.roof[1] - 1} ${y(sh.roof[2]) - 0.4} L${sh.roof[1] + 2} ${y(sh.roof[2]) + 1.4} L${sh.roof[0] + 1} ${y(sh.roof[2]) + 1.4} Z" fill="${L}"/>`;
+      s += `<path d="M${x0 + 4} ${mid + 3} L${x1 - 6} ${mid + 3}" stroke="url(#chrome${_U})" stroke-width="${t === 2 ? 1.2 : 0.8}"/>`;
+      s += `<rect x="${x1 - 6}" y="${B - 5}" width="5" height="3" rx="1" fill="url(#chrome${_U})"/><rect x="${x0 - 1}" y="${B - 5}" width="5" height="3" rx="1" fill="url(#chrome${_U})"/>`;
+      break;
+    }
+  }
+  return s;
+}
+
+/** Detalhes da frente/cima: tomadas de ar, compressor, LEDs, faróis escamoteáveis. */
+function frontSVG({ m, t, p, sh, y, B }) {
+  let s = '';
+  const wx = sh.wind[0], wyY = y(sh.wind[1]), nose = y(sh.nose);
+  switch (m.id) {
+    case 'impreza': // tomada de ar no capô e para-barro
+      s += `<path d="M${wx + 4} ${wyY + 0.5} l3 -3.4 l11 0.6 l1 3.4 Z" fill="${shade(p.body, -0.35)}"/>`;
+      if (t >= 1) s += `<path d="M${sh.wheels[0] - 6} ${B - 1} l-1 7 l4 0 l0 -7 Z" fill="#1a1b1f"/>`;
+      break;
+    case 'skyline':
+      if (t >= 1) s += `<path d="M${sh.x1 - 10} ${B - 2} l9 -1 l0 3 l-9 0 Z" fill="#16161a"/>`;   // lábio dianteiro
+      break;
+    case 'rx7':
+      s += `<path d="M${sh.x1 - 16} ${nose + 1} l11 1.4" stroke="#fff6c8" stroke-width="1.2"/>`;   // faróis estreitos
+      break;
+    case 'lykan': // faróis de LED finos
+      s += `<path d="M${sh.x1 - 22} ${nose + 1} L${sh.x1 - 3} ${nose + 3.5}" stroke="${p.acc}" stroke-width="1.3" ${t >= 1 ? `filter="url(#glow${_U})"` : ''}/>`;
+      s += `<path d="M${sh.x1 - 22} ${nose + 1} L${sh.x1 - 3} ${nose + 3.5}" stroke="#fff" stroke-width=".6"/>`;
+      if (t >= 1) s += `<path d="M${wx + 4} ${wyY + 0.6} l18 2" stroke="#111" stroke-width="1.6"/>`;
+      break;
+    case 'ice':
+      if (t >= 1) s += `<path d="M${sh.x1 - 3} ${B} l6 -2 l0 -9 l-6 -1 Z" fill="#2a2e33" stroke="${p.acc}" stroke-width=".5"/>`;   // para-choque de impacto
+      if (t === 2) s += `<rect x="${sh.roof[0] + 4}" y="${y(sh.roof[2]) - 4}" width="24" height="4" rx="1" fill="#2a2e33"/><circle cx="${sh.roof[0] + 10}" cy="${y(sh.roof[2]) - 2}" r="1.2" fill="${p.acc}" filter="url(#glow${_U})"/><circle cx="${sh.roof[0] + 22}" cy="${y(sh.roof[2]) - 2}" r="1.2" fill="${p.acc}" filter="url(#glow${_U})"/>`;
+      break;
+    case 'gt40': // grade do motor central atrás da cabine
+      for (let i = 0; i < 4; i++) s += `<line x1="${sh.x0 + 9 + i * 5}" y1="${y(sh.deck[1]) + 1}" x2="${sh.x0 + 11 + i * 5}" y2="${y(sh.deck[1]) - 1.2}" stroke="#0d0f14" stroke-width="1"/>`;
+      break;
+    case 'daytona': // bico pontudo
+      s += `<path d="M${sh.x1 - 14} ${nose + 1} L${sh.x1 + 1} ${nose + 5} L${sh.x1 - 14} ${nose + 8} Z" fill="url(#paint${_U})" stroke="${shade(p.body, -0.6)}" stroke-width=".5"/>`;
+      break;
+    case 'fiero': // faróis escamoteáveis
+      if (t >= 1) s += `<path d="M${sh.x1 - 16} ${nose - 0.5} l7 -2.5 l1 2.5 Z" fill="${shade(p.body, -0.3)}"/>`;
+      if (t >= 1) s += `<rect x="${sh.x0 - 3}" y="${B - 6}" width="7" height="3" rx="1.5" fill="url(#chrome${_U})"/>`;
+      break;
+    case 'charger': { // compressor saindo do capô (cresce a cada estágio)
+      const bx = wx + 8, by = wyY + 0.5, bh = [4, 8, 12][t], bw = [10, 13, 15][t];
+      s += `<rect x="${bx}" y="${by - bh}" width="${bw}" height="${bh}" rx="1.5" fill="url(#chrome${_U})" stroke="#4a4f56" stroke-width=".6"/>`;
+      for (let i = 1; i < 4; i++) s += `<line x1="${bx + 1}" y1="${by - bh + i * bh / 4}" x2="${bx + bw - 1}" y2="${by - bh + i * bh / 4}" stroke="#7a8088" stroke-width=".7"/>`;
+      if (t >= 1) s += `<rect x="${bx - 1.5}" y="${by - bh - 4}" width="${bw + 3}" height="4" rx="1.5" fill="${t === 2 ? '#1a1b1f' : '#2a2a2a'}" stroke="url(#chrome${_U})" stroke-width=".6"/>`;
+      if (t === 2) s += `<path d="M${bx + 4} ${by - bh - 4} q-2 -6 3 -9 q-1 5 3 6 q2 -4 1 -7 q5 4 2 10 Z" fill="${p.acc}" opacity=".85" filter="url(#glow${_U})"/>`;
       break;
     }
   }
