@@ -721,6 +721,7 @@ function buyUpgrade(key) {
    ========================================================================= */
 const Input = {
   sel: null,               // carro selecionado por toque {from, i}
+  lastTap: null,           // para detectar toque duplo
   d: null,                 // arraste em andamento
   raf: 0,
 
@@ -826,7 +827,10 @@ const Input = {
     const ref = cellEls[0].getBoundingClientRect();
     const w = clamp(ref.width * 1.15, 96, 170), h = w / 2;
     d.gw = w; d.gh = h;
-    d.lift = d.touch ? h * 0.75 + 16 : 0;
+    // no toque o carro fica um pouco acima do dedo (visível), mas o alvo é
+    // calculado bem perto do dedo — onde a pessoa está mirando
+    d.lift = d.touch ? h * 0.55 + 8 : 0;
+    d.hitLift = d.touch ? h * 0.2 : 0;
     const g = document.createElement('div');
     g.className = 'ghost';
     g.style.width = w + 'px'; g.style.height = h + 'px';
@@ -851,12 +855,25 @@ const Input = {
     this.d.pitR = el.pit.getBoundingClientRect();
   },
 
-  /** Alvo tolerante: dentro do retângulo (com folga) ou o centro mais próximo. */
+  /**
+   * Alvo tolerante. Ordem de prioridade:
+   * 1) ímã de fusão: um carro igual por perto "puxa" o carro arrastado;
+   * 2) a vaga sob o dedo (com folga); 3) a pista; 4) a vaga mais próxima.
+   */
   targetAt(x, y) {
-    const d = this.d;
+    const d = this.d, L = getL(d.src);
     let best = null, bd = Infinity;
+    if (L < MAX_LEVEL) {
+      for (const o of d.targets) {
+        if (!o.t.from || sameSlot(o.t, d.src) || getL(o.t) !== L) continue;
+        if ((o.t.from === 'garage' && o.t.i >= garageSlots()) || (o.t.from === 'track' && o.t.i >= trackSlots())) continue;
+        const r = o.r, dd = Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2));
+        if (dd < Math.max(r.width, r.height) * 0.95 && dd < bd) { bd = dd; best = o; }
+      }
+      if (best) return best;
+    }
     for (const o of d.targets) {
-      const r = o.r, pad = 8;
+      const r = o.r, pad = 14;
       if (x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad) {
         const dd = Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2));
         if (dd < bd) { bd = dd; best = o; }
@@ -878,7 +895,7 @@ const Input = {
     if (!d || !d.active || !d.ghost) return;
     const cx = d.x, cy = d.y - d.lift;
     d.ghost.style.transform = `translate(${cx - d.gw / 2}px, ${cy - d.gh / 2}px) rotate(-3deg)`;
-    const hot = this.targetAt(cx, cy);
+    const hot = this.targetAt(cx, d.y - d.hitLift);
     const key = hot ? (hot.t.type || hot.t.from + hot.t.i) : '';
     if (key === d.hotKey) return;
     d.hotKey = key;
@@ -960,14 +977,44 @@ const Input = {
   tapCar(src) {
     const L = getL(src);
     if (!L) return;
+    // toque duplo no mesmo carro: funde com o gêmeo mais próximo
+    const t0 = performance.now();
+    if (this.lastTap && sameSlot(this.lastTap.src, src) && t0 - this.lastTap.t < 380) {
+      this.lastTap = null;
+      this.clearSelection();
+      this.autoMerge(src);
+      return;
+    }
+    this.lastTap = { src: { from: src.from, i: src.i }, t: t0 };
     if (this.sel && sameSlot(this.sel, src)) { this.clearSelection(); Sfx.click(); return; }
     if (this.sel) { this.applyTo(src); return; }
     this.sel = { from: src.from, i: src.i };
     this.refreshSelection();
     Sfx.select(); vibrate(5);
     const info = carInfo(L);
-    toast(`${info.name} · ${fmt(incomePerLap(L))}/volta — toque no destino`);
+    toast(`${info.name} · ${fmt(incomePerLap(L))}/volta — toque no destino ou toque 2x para fundir`);
     Bus.emit('select', src);
+  },
+  /** Procura o carro igual mais próximo (garagem, depois pista) e funde. */
+  autoMerge(src) {
+    const L = getL(src);
+    if (!L) return;
+    if (L >= MAX_LEVEL) { toast('Nível máximo! Este carro não funde mais.'); return; }
+    const from = nodeOf(src).getBoundingClientRect();
+    let best = null, bd = Infinity;
+    const consider = (t) => {
+      if (sameSlot(t, src) || getL(t) !== L) return;
+      const r = nodeOf(t).getBoundingClientRect();
+      const dd = Math.hypot(r.left - from.left, r.top - from.top) + (t.from === 'track' ? 10000 : 0);
+      if (dd < bd) { bd = dd; best = t; }
+    };
+    for (let i = 0; i < garageSlots(); i++) consider({ from: 'garage', i });
+    for (let i = 0; i < trackSlots(); i++) consider({ from: 'track', i });
+    if (!best) { toast(`Nenhum outro Lv ${L} para fundir — compre ou junte mais.`, 'warn'); Sfx.error(); shake(nodeOf(src)); return; }
+    // o carro da pista continua na pista: ele recebe o outro
+    if (src.from === 'track' && best.from === 'garage') { const tmp = src; src = best; best = tmp; }
+    this.sel = src;
+    this.applyTo(best);
   },
   tapEmpty(t, locked) {
     if (this.sel) { this.applyTo(t); return; }
