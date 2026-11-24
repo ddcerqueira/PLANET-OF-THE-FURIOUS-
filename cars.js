@@ -189,6 +189,7 @@ function wheelSVG(cx, cy, r, rim, tier, acc) {
   s += `<circle cx="${cx}" cy="${cy}" r="${r - 1.2}" fill="none" stroke="#26262c" stroke-width="1.2"/>`;
   s += `<circle cx="${cx}" cy="${cy}" r="${rr}" fill="${rim}"/>`;
   s += `<circle cx="${cx}" cy="${cy}" r="${rr * 0.82}" fill="${shade(rim, -0.35)}"/>`;
+  if (tier >= 1) s += `<rect x="${(cx + rr * 0.12).toFixed(1)}" y="${(cy - rr * 0.72).toFixed(1)}" width="${(rr * 0.42).toFixed(1)}" height="${(rr * 0.85).toFixed(1)}" rx="1.4" fill="${tier === 2 ? acc : '#e0262f'}"/>`;
   // Raios (5 no stock, 6 tuned, 10 furious)
   const spokes = tier === 0 ? 5 : tier === 1 ? 6 : 10;
   for (let i = 0; i < spokes; i++) {
@@ -289,6 +290,10 @@ function carSVG(level) {
 
   // Reflexo no ombro da lataria
   s += `<path d="M${sh.x0 + 6} ${y(sh.tail) + 5} L${sh.deck[0]} ${y(sh.deck[1]) + 4} L${sh.wind[0] + 4} ${y(sh.wind[1]) + 4} L${sh.x1 - 8} ${y(sh.nose) + 4}" fill="none" stroke="#fff" stroke-opacity=".22" stroke-width="1.6" stroke-linecap="round"/>`;
+
+  // Luz refletida do asfalto na parte de baixo da lataria
+  s += `<path d="M${sh.x0 + 4} ${B - 2.5} L${sh.x1 - 4} ${B - 2.5}" stroke="${t === 2 ? p.acc : '#8fc8ff'}" stroke-opacity="${t === 2 ? 0.55 : 0.22}" stroke-width="1.2" stroke-linecap="round"/>`;
+  if (t === 0) s += `<rect x="${sh.x0 + 1}" y="${y(sh.tail) + 8}" width="2.5" height="5" rx=".6" fill="#e8eef6" stroke="#333" stroke-width=".4"/>`;
 
   // Adesivos / faixas por estágio
   s += vinylSVG(m, t, p, sh, y, B);
@@ -453,6 +458,26 @@ function specialSVG(m, t, p, sh, y, B) {
 /* -------------------- Cache de imagens (data URL do SVG) ------------------- */
 
 const _carCache = {};
+const _bmpCache = {};
+/**
+ * Versão rasterizada (canvas) do carro para desenhar na pista.
+ * Desenhar o SVG direto no canvas a cada quadro força o navegador a
+ * re-rasterizar o vetor (caro no Safari); o bitmap é feito uma vez só.
+ */
+function carBitmap(level) {
+  const b = _bmpCache[level];
+  if (b) return b.ready ? b.canvas : null;
+  const entry = _bmpCache[level] = { ready: false, canvas: document.createElement('canvas') };
+  const a = carAsset(level);
+  const paint = () => {
+    entry.canvas.width = 320; entry.canvas.height = 160;
+    entry.canvas.getContext('2d').drawImage(a.img, 0, 0, 320, 160);
+    entry.ready = true;
+  };
+  if (a.img.complete && a.img.naturalWidth) paint();
+  else a.img.addEventListener('load', paint, { once: true });
+  return null;
+}
 /** Retorna { url, img } do nível — o SVG é gerado só uma vez. */
 function carAsset(level) {
   if (!_carCache[level]) {

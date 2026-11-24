@@ -1,7 +1,9 @@
 /* =========================================================================
    PLANET OF THE FURIOUS — game.js
-   Motor do jogo: estado, economia, garagem (DOM), pista (Canvas 2D),
-   arrastar e soltar, popups, áudio sintetizado e ganho offline.
+   Núcleo: configuração, estado/salvamento, economia, garagem (DOM),
+   interação (arrastar + tocar para selecionar), pista (Canvas 2D),
+   qualidade adaptativa, ciclo de vida (offline, background, abas).
+   Popups, menus, tutorial, missões e prestígio ficam em meta.js.
    ========================================================================= */
 'use strict';
 
@@ -33,18 +35,22 @@ const CONFIG = {
   trackSlots: { start: 3, max: 10 },
 
   upgrades: {
-    garage:   { name: 'Garagem maior',  icon: '🅿️', base: 120,  growth: 3.1, max: 8,  desc: '+1 vaga na garagem' },
-    track:    { name: 'Pista ampliada', icon: '🏁', base: 80,   growth: 4.2, max: 7,  desc: '+1 vaga na pista' },
-    income:   { name: 'Patrocínio',     icon: '💰', base: 250,  growth: 2.15, max: 40, desc: '+10% de renda', per: 0.10 },
-    discount: { name: 'Desconto VIP',   icon: '🏷️', base: 400,  growth: 2.5, max: 16, desc: '−2,5% no preço dos carros', per: 0.025 },
+    garage:   { name: 'Garagem maior',  icon: 'garage', base: 120, growth: 3.1,  max: 8,  desc: 'Mais vagas para guardar carros' },
+    track:    { name: 'Pista ampliada', icon: 'road',   base: 80,  growth: 4.2,  max: 7,  desc: 'Mais carros correndo ao mesmo tempo' },
+    income:   { name: 'Patrocínio',     icon: 'up',     base: 250, growth: 2.15, max: 40, desc: 'Cada volta rende mais', per: 0.10 },
+    discount: { name: 'Desconto VIP',   icon: 'star',   base: 400, growth: 2.5,  max: 16, desc: 'Carros mais baratos na loja', per: 0.025 },
   },
 
   nitro: { mult: 2, duration: 30, cooldown: 90 },   // segundos
   chest: { interval: 24 * 3600, incomeSeconds: 600, minCoins: 100 },
-  offline: { maxSeconds: 2 * 3600, rate: 1.0, minSeconds: 20 },
+  offline: { maxSeconds: 2 * 3600, rate: 1.0, minSeconds: 20, popupSeconds: 120 },
+  prestige: { minLevel: 30, incomeBonus: 0.5 },     // +50% de renda permanente por prestígio
 
-  saveKey: 'potf_save_v1',
+  saveKey: 'potf_save_v1',    // mesma chave da versão 1 (saves antigos continuam valendo)
+  backupKey: 'potf_save_backup',
+  saveVersion: 2,
   autosaveMs: 5000,
+  backupEveryMs: 60000,
 };
 
 /* =========================================================================
@@ -54,6 +60,9 @@ const $ = (sel) => document.querySelector(sel);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const now = () => Date.now();
 const SUFFIX = ['', 'K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc'];
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const canVibrate = typeof navigator.vibrate === 'function' && !isIOS;
 
 /** Formata números grandes: 1234 → 1,23K */
 function fmt(n) {
@@ -71,125 +80,162 @@ function fmtTime(sec) {
   if (m) return `${m}m${String(s).padStart(2, '0')}`;
   return `${s}s`;
 }
-function chapBadge(chapter, big) {
-  // Cor própria por capítulo (gira o matiz entre laranja e ciano)
+function fmtLong(sec) {
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  if (h && m) return `${h}h ${m}min`;
+  if (h) return `${h}h`;
+  if (m) return `${m} min`;
+  return `${sec}s`;
+}
+function chapBadge(chapter, size) {
   const hue = (20 + (chapter - 1) * 33) % 360;
-  return `<span class="chap${big ? ' big' : ''}" style="--c1:hsl(${hue} 95% 58%);--c2:hsl(${hue} 90% 30%)">${chapter}</span>`;
+  return `<span class="chap${size ? ' ' + size : ''}" style="--c1:hsl(${hue} 95% 58%);--c2:hsl(${hue} 90% 30%)">${chapter}</span>`;
 }
-/** Gerador pseudoaleatório com semente (cenário sempre igual). */
-function rng(seed) {
-  return () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
-}
+const icon = (name, cls) => `<svg${cls ? ` class="${cls}"` : ''} aria-hidden="true"><use href="#i-${name}"/></svg>`;
+function rng(seed) { return () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }; }
+function vibrate(p) { if (canVibrate && state.settings.vibrate) try { navigator.vibrate(p); } catch (e) { /* ignora */ } }
 
-/* =========================================================================
-   3) ÁUDIO — efeitos sintetizados com Web Audio API
-   ========================================================================= */
-const Sfx = {
-  ctx: null, master: null, lastCoin: 0,
-  init() {
-    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    this.ctx = new AC();
-    this.master = this.ctx.createGain();
-    this.master.gain.value = 0.35;
-    this.master.connect(this.ctx.destination);
-  },
-  get on() { return this.ctx && !state.muted; },
-  tone(freq, dur, type = 'square', vol = 0.3, slideTo = null, delay = 0) {
-    if (!this.on) return;
-    const t = this.ctx.currentTime + delay;
-    const o = this.ctx.createOscillator(), g = this.ctx.createGain();
-    o.type = type;
-    o.frequency.setValueAtTime(freq, t);
-    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(vol, t + 0.01);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g); g.connect(this.master);
-    o.start(t); o.stop(t + dur + 0.02);
-  },
-  noise(dur, vol = 0.2, freq = 1200, delay = 0) {
-    if (!this.on) return;
-    const t = this.ctx.currentTime + delay;
-    const len = Math.floor(this.ctx.sampleRate * dur);
-    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
-    const src = this.ctx.createBufferSource(); src.buffer = buf;
-    const f = this.ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = freq;
-    const g = this.ctx.createGain(); g.gain.value = vol;
-    src.connect(f); f.connect(g); g.connect(this.master);
-    src.start(t);
-  },
-  buy()     { this.tone(440, 0.08, 'square', 0.2); this.tone(880, 0.12, 'square', 0.2, null, 0.07); },
-  merge()   { this.tone(220, 0.25, 'sawtooth', 0.18, 880); this.tone(660, 0.15, 'triangle', 0.25, null, 0.18); this.tone(990, 0.25, 'triangle', 0.22, null, 0.26); this.noise(0.25, 0.12, 3000); },
-  coin()    { const t = performance.now(); if (t - this.lastCoin < 110) return; this.lastCoin = t; this.tone(1320, 0.06, 'square', 0.08); this.tone(1980, 0.1, 'square', 0.07, null, 0.05); },
-  unlock()  { [523, 659, 784, 1046, 1318].forEach((f, i) => this.tone(f, 0.22, 'triangle', 0.25, null, i * 0.09)); this.noise(0.6, 0.08, 6000, 0.3); },
-  sell()    { this.tone(600, 0.15, 'square', 0.18, 200); },
-  error()   { this.tone(140, 0.18, 'sawtooth', 0.2); },
-  click()   { this.tone(700, 0.04, 'square', 0.12); },
-  place()   { this.tone(180, 0.2, 'sawtooth', 0.15, 520); this.noise(0.2, 0.08, 800); },
-  nitro()   { this.noise(0.8, 0.25, 900); this.tone(120, 0.8, 'sawtooth', 0.2, 900); },
-  chest()   { this.noise(0.3, 0.15, 400); [392, 523, 659, 784].forEach((f, i) => this.tone(f, 0.18, 'square', 0.15, null, 0.25 + i * 0.08)); },
-  upgrade() { this.tone(330, 0.1, 'square', 0.18, 660); this.tone(660, 0.18, 'triangle', 0.2, 1320, 0.1); },
+/* Mini barramento de eventos (game.js → meta.js: tutorial, missões...) */
+const Bus = {
+  map: {},
+  on(ev, fn) { (this.map[ev] || (this.map[ev] = [])).push(fn); },
+  emit(ev, data) { (this.map[ev] || []).forEach((fn) => { try { fn(data); } catch (e) { console.error(e); } }); },
 };
 
-function vibrate(ms) { if (state.vibrate && navigator.vibrate) try { navigator.vibrate(ms); } catch (e) { /* ignora */ } }
-
 /* =========================================================================
-   4) ESTADO + SALVAMENTO
+   3) ESTADO + SALVAMENTO (versionado, com migração e backup)
    ========================================================================= */
 function defaultState() {
   const garage = new Array(CONFIG.garage.max).fill(0);
   CONFIG.startCars.forEach((lv, i) => { garage[i] = lv; });
   return {
-    v: 1,
+    v: CONFIG.saveVersion,
     coins: CONFIG.startCoins,
     garage,
     track: new Array(CONFIG.trackSlots.max).fill(0),
     upg: { garage: 0, track: 0, income: 0, discount: 0 },
-    buys: {},                 // compras por nível (para o preço crescente)
+    buys: {},                 // compras por nível (preço crescente)
     maxLevel: 1,
-    unlocked: [1],            // níveis já vistos (coleção)
+    unlocked: [1],            // níveis já vistos (coleção — nunca reseta)
+    reserve: [],              // carros bônus esperando vaga na garagem
     nitroUntil: 0, nitroReadyAt: 0,
     chestAt: 0,               // próximo baú disponível (timestamp)
-    muted: false, vibrate: true,
+    prestige: 0,
+    settings: { muted: false, music: 0.45, sfx: 0.8, vibrate: true, quality: 'auto', reduceMotion: null },
+    tutorial: { step: 0, done: false },
+    stats: { merges: 0, buys: 0, sells: 0, nitros: 0, chests: 0, earned: 0, laps: 0, bestTrack: 0, prestiges: 0 },
+    missions: {},             // nível já resgatado de cada cadeia de missões
+    achievements: [],
     lastSeen: now(),
-    totalEarned: 0, merges: 0,
+    saveSeq: 0,
   };
+}
+
+const num = (v, d = 0) => (typeof v === 'number' && isFinite(v) ? v : d);
+const lvl = (v) => clamp(Math.floor(num(v)), 0, MAX_LEVEL);
+
+/** Migra saves antigos e corrige qualquer campo inválido. Nunca lança erro. */
+function migrateState(raw) {
+  const d = defaultState();
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return d;
+  const s = Object.assign(d, raw);
+  // v1 → v2: configurações e estatísticas viraram objetos
+  if (!raw.v || raw.v < 2) {
+    s.settings = Object.assign(defaultState().settings, { muted: !!raw.muted, vibrate: raw.vibrate !== false });
+    s.stats = Object.assign(defaultState().stats, { merges: num(raw.merges), earned: num(raw.totalEarned) });
+    // quem já jogou não precisa do tutorial
+    s.tutorial = { step: 0, done: num(raw.maxLevel, 1) > 1 || num(raw.merges) > 0 };
+    delete s.muted; delete s.vibrate; delete s.merges; delete s.totalEarned;
+  }
+  s.v = CONFIG.saveVersion;
+  s.coins = Math.max(0, num(s.coins));
+  s.garage = Array.from({ length: CONFIG.garage.max }, (_, i) => lvl((raw.garage || [])[i]));
+  s.track = Array.from({ length: CONFIG.trackSlots.max }, (_, i) => lvl((raw.track || [])[i]));
+  const u = raw.upg && typeof raw.upg === 'object' ? raw.upg : {};
+  s.upg = {};
+  for (const k of Object.keys(CONFIG.upgrades)) s.upg[k] = clamp(Math.floor(num(u[k])), 0, CONFIG.upgrades[k].max);
+  s.buys = {};
+  if (raw.buys && typeof raw.buys === 'object') for (const k of Object.keys(raw.buys)) if (+k >= 1 && +k <= MAX_LEVEL) s.buys[k] = Math.max(0, Math.floor(num(raw.buys[k])));
+  s.unlocked = Array.isArray(raw.unlocked) ? [...new Set(raw.unlocked.map(lvl).filter(Boolean))] : [1];
+  if (!s.unlocked.includes(1)) s.unlocked.unshift(1);
+  s.reserve = Array.isArray(raw.reserve) ? raw.reserve.map(lvl).filter(Boolean).slice(0, 20) : [];
+  // nível máximo coerente com os carros que existem
+  const owned = [...s.garage, ...s.track, ...s.reserve];
+  s.maxLevel = clamp(Math.max(1, Math.floor(num(s.maxLevel, 1)), ...owned), 1, MAX_LEVEL);
+  for (const L of owned) if (L && !s.unlocked.includes(L)) s.unlocked.push(L);
+  s.nitroUntil = num(s.nitroUntil); s.nitroReadyAt = num(s.nitroReadyAt); s.chestAt = num(s.chestAt);
+  s.prestige = Math.max(0, Math.floor(num(s.prestige)));
+  s.settings = Object.assign(defaultState().settings, s.settings && typeof s.settings === 'object' ? s.settings : {});
+  s.settings.music = clamp(num(s.settings.music, 0.45), 0, 1);
+  s.settings.sfx = clamp(num(s.settings.sfx, 0.8), 0, 1);
+  s.settings.muted = !!s.settings.muted;
+  if (!['auto', 'high', 'medium', 'low'].includes(s.settings.quality)) s.settings.quality = 'auto';
+  if (s.settings.reduceMotion !== null && typeof s.settings.reduceMotion !== 'boolean') s.settings.reduceMotion = null;
+  s.tutorial = Object.assign({ step: 0, done: false }, s.tutorial && typeof s.tutorial === 'object' ? s.tutorial : {});
+  s.tutorial.step = clamp(Math.floor(num(s.tutorial.step)), 0, 99);
+  s.stats = Object.assign(defaultState().stats, s.stats && typeof s.stats === 'object' ? s.stats : {});
+  for (const k of Object.keys(s.stats)) s.stats[k] = Math.max(0, num(s.stats[k]));
+  s.missions = s.missions && typeof s.missions === 'object' && !Array.isArray(s.missions) ? s.missions : {};
+  for (const k of Object.keys(s.missions)) s.missions[k] = Math.max(0, Math.floor(num(s.missions[k])));
+  s.achievements = Array.isArray(s.achievements) ? s.achievements.filter((x) => typeof x === 'string') : [];
+  s.lastSeen = num(s.lastSeen, now());
+  s.saveSeq = num(s.saveSeq);
+  // jogo sem nenhum carro e sem dinheiro ficaria travado: devolve um carro
+  if (!owned.some(Boolean) && s.coins < CONFIG.buy.base) s.garage[0] = 1;
+  return s;
+}
+
+function readSave(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    return obj && typeof obj === 'object' ? obj : null;
+  } catch (e) { return null; }
+}
+
+let storageOk = true;
+let lastBackupAt = 0;
+let frozen = false;          // outra aba assumiu o jogo: esta para de salvar
+
+function loadState() {
+  const main = readSave(CONFIG.saveKey);
+  if (main) return migrateState(main);
+  const bak = readSave(CONFIG.backupKey);   // save principal corrompido → backup
+  if (bak) { console.warn('Save principal inválido; usando backup.'); return migrateState(bak); }
+  return defaultState();
 }
 
 let state = loadState();
 
-function loadState() {
+function saveState(force) {
+  if (frozen && !force) return;
+  state.lastSeen = now();
+  state.saveSeq++;
   try {
-    const raw = localStorage.getItem(CONFIG.saveKey);
-    if (!raw) return defaultState();
-    const s = Object.assign(defaultState(), JSON.parse(raw));
-    // Normaliza arrays caso a configuração tenha mudado
-    s.garage = Array.from({ length: CONFIG.garage.max }, (_, i) => clamp(s.garage[i] | 0, 0, MAX_LEVEL));
-    s.track = Array.from({ length: CONFIG.trackSlots.max }, (_, i) => clamp(s.track[i] | 0, 0, MAX_LEVEL));
-    s.upg = Object.assign({ garage: 0, track: 0, income: 0, discount: 0 }, s.upg);
-    if (!Array.isArray(s.unlocked)) s.unlocked = [1];
-    if (!isFinite(s.coins)) s.coins = 0;
-    return s;
+    if (now() - lastBackupAt > CONFIG.backupEveryMs) {
+      // o backup guarda o retrato anterior, útil se algo der errado
+      const prev = localStorage.getItem(CONFIG.saveKey);
+      if (prev) localStorage.setItem(CONFIG.backupKey, prev);
+      lastBackupAt = now();
+    }
+    localStorage.setItem(CONFIG.saveKey, JSON.stringify(state));
+    storageOk = true;
   } catch (e) {
-    console.warn('Save inválido, começando do zero', e);
-    return defaultState();
+    if (storageOk) { storageOk = false; toast('Não foi possível salvar (armazenamento cheio ou modo privado).', 'warn', 3000); }
   }
 }
-function saveState() {
-  state.lastSeen = now();
-  try { localStorage.setItem(CONFIG.saveKey, JSON.stringify(state)); } catch (e) { /* armazenamento cheio/privado */ }
-}
+/** Guarda o save atual como backup antes de operações destrutivas. */
+function backupNow() { try { localStorage.setItem(CONFIG.backupKey, JSON.stringify(state)); lastBackupAt = now(); } catch (e) { /* ignora */ } }
 
 /* =========================================================================
-   5) ECONOMIA
+   4) ECONOMIA
    ========================================================================= */
 const garageSlots = () => CONFIG.garage.start + state.upg.garage;
 const trackSlots = () => CONFIG.trackSlots.start + state.upg.track;
-const incomeMult = () => 1 + state.upg.income * CONFIG.upgrades.income.per;
+const prestigeMult = () => 1 + state.prestige * CONFIG.prestige.incomeBonus;
+const incomeMult = () => (1 + state.upg.income * CONFIG.upgrades.income.per) * prestigeMult();
 const discount = () => state.upg.discount * CONFIG.upgrades.discount.per;
 const nitroOn = () => now() < state.nitroUntil;
 
@@ -200,42 +246,71 @@ const sellPrice = (L) => Math.max(1, Math.floor(baseCost(L) * CONFIG.sell.rate))
 const lapTime = (L) => CONFIG.track.lapBase / (1 + CONFIG.track.speedPerLevel * (L - 1));
 const incomePerLap = (L) => CONFIG.income.base * Math.pow(CONFIG.income.levelMult, L - 1) * incomeMult();
 
-/** Renda por segundo dos carros na pista. */
 function incomePerSec(withNitro = nitroOn()) {
   let s = 0;
-  for (let i = 0; i < trackSlots(); i++) {
-    const L = state.track[i];
-    if (L) s += incomePerLap(L) / lapTime(L);
-  }
+  for (let i = 0; i < trackSlots(); i++) { const L = state.track[i]; if (L) s += incomePerLap(L) / lapTime(L); }
   return s * (withNitro ? CONFIG.nitro.mult : 1);
 }
-function upgradeCost(key) {
-  const u = CONFIG.upgrades[key];
-  return Math.ceil(u.base * Math.pow(u.growth, state.upg[key]));
-}
+function upgradeCost(key) { const u = CONFIG.upgrades[key]; return Math.ceil(u.base * Math.pow(u.growth, state.upg[key])); }
+const carsOnTrack = () => state.track.slice(0, trackSlots()).filter(Boolean).length;
 const totalCars = () => state.garage.filter(Boolean).length + state.track.filter(Boolean).length;
+const countLevel = (L) => state.garage.filter((v) => v === L).length + state.track.filter((v) => v === L).length;
 const freeGarageIndex = () => { for (let i = 0; i < garageSlots(); i++) if (!state.garage[i]) return i; return -1; };
 const freeTrackIndex = () => { for (let i = 0; i < trackSlots(); i++) if (!state.track[i]) return i; return -1; };
-
-function addCoins(n) {
-  state.coins += n;
-  state.totalEarned += n;
-}
+function addCoins(n) { state.coins += n; state.stats.earned += n; }
 
 /* =========================================================================
-   6) REFERÊNCIAS DO DOM
+   5) REFERÊNCIAS DO DOM
    ========================================================================= */
 const el = {
-  splash: $('#splash'), game: $('#game'),
-  coins: $('#coins'), coinsBox: $('.hud-coins'), income: $('#income'), maxLevel: $('#maxLevel'),
-  garage: $('#garage'), pit: $('#pit'), trackWrap: $('#trackWrap'), canvas: $('#track'),
-  trackHint: $('#trackHint'), trash: $('#trash'),
-  btnBuy: $('#btnBuy'), buyCar: $('#buyCar'), buyPrice: $('#buyPrice'),
-  btnUpgrades: $('#btnUpgrades'), upgDot: $('#upgDot'), btnCollection: $('#btnCollection'),
-  btnNitro: $('#btnNitro'), nitroLabel: $('#nitroLabel'), nitroBanner: $('#nitroBanner'), nitroTime: $('#nitroTime'),
-  btnChest: $('#btnChest'), chestLabel: $('#chestLabel'),
-  btnMute: $('#btnMute'), btnSettings: $('#btnSettings'),
-  modal: $('#modal'), modalCard: $('#modalCard'), toast: $('#toast'), fx: $('#fx'),
+  app: $('#app'), splash: $('#splash'), game: $('#game'),
+  coins: $('#coins'), hudMoney: $('#hudMoney'), coinIco: $('#coinIco'), income: $('#income'), x2Tag: $('#x2Tag'),
+  maxLevel: $('#maxLevel'), hudChap: $('#hudChap'), hudLevel: $('#hudLevel'),
+  garage: $('#garage'), garageWrap: $('#garageWrap'), pit: $('#pit'), trackWrap: $('#trackWrap'), canvas: $('#track'),
+  trackHint: $('#trackHint'), trackCount: $('#trackCount'), trash: $('#trash'), reservePill: $('#reservePill'),
+  btnBuy: $('#btnBuy'), buyCar: $('#buyCar'), buyPrice: $('#buyPrice'), buyTitle: $('#buyTitle'), buyFill: $('#buyFill'), buyLv: $('#buyLv'),
+  btnNitro: $('#btnNitro'), nitroLabel: $('#nitroLabel'), nitroBanner: $('#nitroBanner'), nitroTime: $('#nitroTime'), ring: $('#btnNitro .ring-fg'),
+  tabbar: $('#tabbar'), chestLabel: $('#chestLabel'),
+  btnSettings: $('#btnSettings'),
+  toast: $('#toast'), fx: $('#fx'), banner: $('#banner'),
+};
+
+/* =========================================================================
+   6) QUALIDADE GRÁFICA (Auto / Alta / Média / Baixa) + menos movimento
+   ========================================================================= */
+const QUALITY = {
+  high:   { dpr: 2,   rain: 40, reflect: true,  sparks: 160, lights: true,  wheels: true,  burst: 18 },
+  medium: { dpr: 1.5, rain: 18, reflect: true,  sparks: 70,  lights: false, wheels: true,  burst: 12 },
+  low:    { dpr: 1,   rain: 0,  reflect: false, sparks: 24,  lights: false, wheels: false, burst: 7 },
+};
+let autoQuality = 'high';
+const qualityName = () => (state.settings.quality === 'auto' ? autoQuality : state.settings.quality);
+const Q = () => QUALITY[qualityName()];
+const reducedMotion = () => (state.settings.reduceMotion == null ? matchMedia('(prefers-reduced-motion: reduce)').matches : state.settings.reduceMotion);
+
+function applyQuality() {
+  document.body.classList.toggle('q-low', qualityName() === 'low');
+  document.body.classList.toggle('rm', reducedMotion());
+  if (Track.ready) Track.resize(true);
+}
+
+/** Mede o FPS e, no modo Auto, reduz a qualidade se o aparelho sofrer. */
+const Perf = {
+  acc: 0, frames: 0, bad: 0, fps: 60,
+  tick(dt) {
+    this.acc += dt; this.frames++;
+    if (this.acc < 2) return;
+    this.fps = this.frames / this.acc;
+    this.acc = 0; this.frames = 0;
+    if (state.settings.quality !== 'auto' || document.hidden) return;
+    if (this.fps < 45) this.bad++; else this.bad = 0;
+    if (this.bad >= 2 && autoQuality !== 'low') {
+      autoQuality = autoQuality === 'high' ? 'medium' : 'low';
+      this.bad = 0;
+      applyQuality();
+      console.info('Qualidade automática →', autoQuality, `(${this.fps.toFixed(0)} fps)`);
+    }
+  },
 };
 
 /* =========================================================================
@@ -246,258 +321,366 @@ const cellEls = [], chipEls = [];
 function buildGrid() {
   for (let i = 0; i < CONFIG.garage.max; i++) {
     const c = document.createElement('div');
-    c.className = 'cell';
-    c.dataset.i = i;
-    el.garage.appendChild(c);
-    cellEls.push(c);
+    c.className = 'cell'; c.dataset.i = i;
+    el.garage.appendChild(c); cellEls.push(c);
   }
   for (let i = 0; i < CONFIG.trackSlots.max; i++) {
     const c = document.createElement('div');
-    c.className = 'chip';
-    c.dataset.t = i;
-    el.pit.appendChild(c);
-    chipEls.push(c);
+    c.className = 'chip'; c.dataset.t = i;
+    el.pit.appendChild(c); chipEls.push(c);
   }
 }
 
-/** Atualiza uma célula da garagem. anim: 'pop' (merge) | 'new' (chegou) */
+/** Quantas células mostrar: as liberadas + a linha da próxima vaga bloqueada. */
+function visibleCells() {
+  const s = garageSlots();
+  return Math.min(CONFIG.garage.max, Math.ceil(Math.min(s + 1, CONFIG.garage.max) / 4) * 4);
+}
+
+function hasPartner(i) {
+  const L = state.garage[i];
+  if (!L || L >= MAX_LEVEL) return false;
+  for (let k = 0; k < garageSlots(); k++) if (k !== i && state.garage[k] === L) return true;
+  for (let k = 0; k < trackSlots(); k++) if (state.track[k] === L) return true;
+  return false;
+}
+
+/** Atualiza uma célula. anim: 'pop' (merge) | 'new' (chegou) */
 function renderCell(i, anim) {
-  const c = cellEls[i], L = state.garage[i], locked = i >= garageSlots();
-  const key = locked ? 'x' : String(L);
+  const c = cellEls[i], L = state.garage[i], slots = garageSlots(), vis = i < visibleCells();
+  const locked = i >= slots, cta = i === slots;
+  const key = !vis ? 'h' : locked ? (cta ? 'cta' : 'x') : String(L);
   if (c.dataset.k !== key) {
     c.dataset.k = key;
-    c.classList.toggle('locked', locked);
-    if (!L || locked) c.innerHTML = '';
-    else {
+    c.hidden = !vis;
+    c.className = 'cell' + (locked ? ' locked' + (cta ? ' cta' : '') : '');
+    if (locked) {
+      c.innerHTML = cta ? `<div class="center">${icon('lock')}<span class="cta-txt">UPGRADE</span></div>` : icon('lock');
+      c.setAttribute('aria-label', 'Vaga bloqueada');
+      delete c.dataset.tier;
+    } else if (!L) {
+      c.innerHTML = '';
+      c.setAttribute('aria-label', 'Vaga livre');
+      delete c.dataset.tier;
+    } else {
       const info = carInfo(L);
-      // atraso aleatório para o "respirar" não ficar sincronizado
-      c.innerHTML = `<span class="lv">${L}</span>${chapBadge(info.chapter)}<div class="car" style="--d:-${(Math.random() * 2).toFixed(2)}s"><img src="${carAsset(L).url}" alt="${info.name}"></div>`;
+      c.dataset.tier = info.tier;
+      c.setAttribute('aria-label', `${info.name}, nível ${L}`);
+      c.innerHTML = `<span class="tag-lv">Lv ${L}${icon('up', 'up')}</span>${chapBadge(info.chapter, 'sm')}<div class="car" style="--d:-${(Math.random() * 2).toFixed(2)}s"><img src="${carAsset(L).url}" alt=""></div>`;
     }
   }
-  if (anim && L) {
-    c.classList.remove('pop', 'new');
-    void c.offsetWidth; // reinicia a animação
-    c.classList.add(anim);
-  }
+  if (!locked && L) c.classList.toggle('can-merge', hasPartner(i));
+  if (anim && L) { c.classList.remove('pop', 'new', 'squash'); void c.offsetWidth; c.classList.add(anim); }
 }
-function renderGarage() { for (let i = 0; i < cellEls.length; i++) renderCell(i); }
+function renderGarage() {
+  el.garage.style.setProperty('--rows', visibleCells() / 4);
+  for (let i = 0; i < cellEls.length; i++) renderCell(i);
+  Input.refreshSelection();
+}
 
 function renderPit() {
   const n = trackSlots();
   for (let i = 0; i < chipEls.length; i++) {
     const c = chipEls[i], L = state.track[i];
-    // mostra as vagas liberadas + 1 bloqueada (dica de upgrade)
-    const visible = i < Math.min(n + 1, CONFIG.trackSlots.max);
-    const locked = i >= n;
+    const visible = i < Math.min(n + 1, CONFIG.trackSlots.max), locked = i >= n;
     const key = `${visible}|${locked}|${L}`;
     if (c.dataset.k === key) continue;
     c.dataset.k = key;
     c.style.visibility = visible ? '' : 'hidden';
-    c.classList.toggle('locked', locked);
-    c.classList.toggle('filled', !!L && !locked);
-    c.innerHTML = L && !locked ? `<span class="lv">${L}</span><img src="${carAsset(L).url}" alt="">` : '';
+    c.className = 'chip' + (locked ? ' locked' : '') + (L && !locked ? ' filled' : '');
+    c.innerHTML = locked ? icon('lock') : L ? `<span class="lv">${L}</span><img src="${carAsset(L).url}" alt="">` : '';
+    c.setAttribute('aria-label', locked ? 'Vaga da pista bloqueada' : L ? `Na pista: ${carInfo(L).name}` : 'Vaga da pista livre');
   }
-  el.trackHint.classList.toggle('hidden', state.track.some(Boolean));
+  const on = carsOnTrack();
+  el.trackHint.hidden = on > 0;
+  el.trackCount.querySelector('span').textContent = `${on}/${n}`;
+  el.trackCount.classList.toggle('full', on >= n);
 }
 
 /* =========================================================================
    8) HUD E BOTÕES
    ========================================================================= */
 let hudCache = {};
-function setText(node, key, txt) { if (hudCache[key] !== txt) { hudCache[key] = txt; node.innerHTML = txt; } }
+function setText(node, key, txt) { if (hudCache[key] !== txt) { hudCache[key] = txt; node.textContent = txt; } }
+function setHTML(node, key, html) { if (hudCache[key] !== html) { hudCache[key] = html; node.innerHTML = html; } }
+function setClass(node, cls, on) { if (node.classList.contains(cls) !== on) node.classList.toggle(cls, on); }
+
+function buyState() {
+  const L = buyLevel(), price = buyPrice(L), free = freeGarageIndex() >= 0;
+  return { L, price, free, afford: state.coins >= price };
+}
 
 function renderHUD() {
+  const t = now(), nOn = t < state.nitroUntil;
   setText(el.coins, 'coins', fmt(state.coins));
   setText(el.income, 'income', fmt(incomePerSec()) + '/s');
-  setText(el.maxLevel, 'max', `${chapBadge(carInfo(state.maxLevel).chapter)} ${state.maxLevel}`);
+  if (el.x2Tag.hidden === nOn) el.x2Tag.hidden = !nOn;
+  setHTML(el.hudChap, 'chap', chapBadge(carInfo(state.maxLevel).chapter));
+  setText(el.maxLevel, 'max', 'Lv ' + state.maxLevel);
 
-  // Botão comprar
-  const L = buyLevel(), price = buyPrice(L), free = freeGarageIndex() >= 0;
-  if (hudCache.buyL !== L) { hudCache.buyL = L; el.buyCar.src = carAsset(L).url; }
-  setText(el.buyPrice, 'price', free ? fmt(price) : 'Cheia!');
-  el.btnBuy.disabled = !free || state.coins < price;
+  // Comprar: explica visualmente por que não dá
+  const b = buyState();
+  if (hudCache.buyL !== b.L) { hudCache.buyL = b.L; el.buyCar.src = carAsset(b.L).url; }
+  setText(el.buyLv, 'buyLv', 'Lv ' + b.L);
+  setClass(el.btnBuy, 'full', !b.free);
+  setClass(el.btnBuy, 'cant', b.free && !b.afford);
+  const dis = String(!b.free || !b.afford);
+  if (hudCache.buyDis !== dis) { hudCache.buyDis = dis; el.btnBuy.setAttribute('aria-disabled', dis); }
+  let fill = '0%';
+  if (!b.free) { setText(el.buyTitle, 'bt', 'GARAGEM CHEIA'); setText(el.buyPrice, 'price', 'Junte ou venda'); }
+  else if (!b.afford) { setText(el.buyTitle, 'bt', 'COMPRAR'); setText(el.buyPrice, 'price', 'Faltam ' + fmt(b.price - state.coins)); fill = Math.floor((state.coins / b.price) * 100) + '%'; }
+  else { setText(el.buyTitle, 'bt', 'COMPRAR'); setText(el.buyPrice, 'price', fmt(b.price)); }
+  if (hudCache.fill !== fill) { hudCache.fill = fill; el.buyFill.style.width = fill; }
 
-  // Ponto de aviso no botão de upgrades se algum é comprável
-  const canUpg = Object.keys(CONFIG.upgrades).some((k) => state.upg[k] < CONFIG.upgrades[k].max && state.coins >= upgradeCost(k));
-  el.upgDot.classList.toggle('hidden', !canUpg);
-
-  // Nitro
-  const t = now();
-  const nOn = t < state.nitroUntil, ready = t >= state.nitroReadyAt;
-  el.btnNitro.classList.toggle('ready', ready && !nOn);
-  el.btnNitro.classList.toggle('cooling', !ready && !nOn);
-  el.nitroBanner.classList.toggle('hidden', !nOn);
+  // Nitro: anel mostra duração (ativo) ou recarga
+  const ready = t >= state.nitroReadyAt;
+  setClass(el.btnNitro, 'ready', ready && !nOn);
+  setClass(el.btnNitro, 'active', nOn);
+  setClass(el.btnNitro, 'cooling', !ready && !nOn);
+  setClass(el.trackWrap, 'nitro', nOn);
+  if (el.nitroBanner.hidden === nOn) el.nitroBanner.hidden = !nOn;
   if (nOn) setText(el.nitroTime, 'nt', String(Math.ceil((state.nitroUntil - t) / 1000)));
-  setText(el.nitroLabel, 'nl', nOn ? 'ATIVO' : ready ? 'NITRO' : fmtTime((state.nitroReadyAt - t) / 1000));
-  const ring = el.btnNitro.querySelector('.ring circle');
+  setText(el.nitroLabel, 'nl', nOn ? Math.ceil((state.nitroUntil - t) / 1000) + 's' : ready ? 'NITRO' : fmtTime((state.nitroReadyAt - t) / 1000));
   const frac = nOn ? (state.nitroUntil - t) / (CONFIG.nitro.duration * 1000)
-    : ready ? 0 : 1 - (state.nitroReadyAt - t) / (CONFIG.nitro.cooldown * 1000);
-  ring.style.strokeDashoffset = (113.1 * (1 - clamp(frac, 0, 1))).toFixed(1);
+    : ready ? 1 : 1 - (state.nitroReadyAt - t) / (CONFIG.nitro.cooldown * 1000);
+  const off = (182.2 * (1 - clamp(frac, 0, 1))).toFixed(1);
+  if (hudCache.ring !== off) { hudCache.ring = off; el.ring.style.strokeDashoffset = off; }
 
-  // Baú
-  const chestReady = t >= state.chestAt;
-  el.btnChest.classList.toggle('ready', chestReady);
-  el.btnChest.classList.toggle('cooling', !chestReady);
-  setText(el.chestLabel, 'cl', chestReady ? 'BAÚ' : fmtTime((state.chestAt - t) / 1000));
+  Meta.renderBadges(t);
 }
 
-function renderMute() {
-  el.btnMute.innerHTML = state.muted
-    ? '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 9h4l5-4v14l-5-4H3zm13.6 3 2.7-2.7-1.4-1.4-2.7 2.7-2.7-2.7-1.4 1.4 2.7 2.7-2.7 2.7 1.4 1.4 2.7-2.7 2.7 2.7 1.4-1.4z"/></svg>'
-    : '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 9h4l5-4v14l-5-4H3zm13 3a4 4 0 0 0-2-3.5v7a4 4 0 0 0 2-3.5zm-2-8v2a6 6 0 0 1 0 12v2a8 8 0 0 0 0-16z"/></svg>';
-}
-
-function toast(msg, ms = 1600) {
+function toast(msg, kind, ms = 1900) {
   el.toast.textContent = msg;
-  el.toast.classList.add('show');
+  el.toast.className = 'toast show' + (kind ? ' ' + kind : '');
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => el.toast.classList.remove('show'), ms);
+  toast._t = setTimeout(() => { el.toast.className = 'toast' + (kind ? ' ' + kind : ''); }, ms);
 }
 
 /* =========================================================================
-   9) EFEITOS VISUAIS (DOM) — partículas, flash, números flutuantes
+   9) EFEITOS VISUAIS (DOM) — partículas, flash, números, moedas voando
    ========================================================================= */
-function centerOf(node) {
-  const r = node.getBoundingClientRect();
-  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+function centerOf(node) { const r = node.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }
+function animateEl(node, frames, opts) {
+  el.fx.appendChild(node);
+  const a = node.animate(frames, opts);
+  a.onfinish = () => node.remove();
+  a.oncancel = () => node.remove();
+  return a;
 }
-function burst(x, y, colors, count = 16) {
-  const frag = document.createDocumentFragment();
+function burst(x, y, colors, count) {
+  count = Math.round((count || Q().burst) * (reducedMotion() ? 0.5 : 1));
   for (let i = 0; i < count; i++) {
     const p = document.createElement('div');
     p.className = 'particle';
     const c = colors[i % colors.length];
-    p.style.cssText = `left:${x - 4}px;top:${y - 4}px;background:${c};box-shadow:0 0 8px ${c}`;
-    const a = Math.random() * Math.PI * 2, d = 30 + Math.random() * 50;
-    p.animate([
-      { transform: 'translate(0,0) scale(1)', opacity: 1 },
-      { transform: `translate(${Math.cos(a) * d}px,${Math.sin(a) * d}px) scale(.2)`, opacity: 0 },
-    ], { duration: 500 + Math.random() * 300, easing: 'cubic-bezier(.2,.8,.3,1)' }).onfinish = () => p.remove();
-    frag.appendChild(p);
+    p.style.background = c; p.style.boxShadow = `0 0 8px ${c}`;
+    const a = Math.random() * Math.PI * 2, d = 30 + Math.random() * 55;
+    animateEl(p, [
+      { transform: `translate(${x - 4}px,${y - 4}px) scale(1)`, opacity: 1 },
+      { transform: `translate(${x - 4 + Math.cos(a) * d}px,${y - 4 + Math.sin(a) * d}px) scale(.2)`, opacity: 0 },
+    ], { duration: 450 + Math.random() * 300, easing: 'cubic-bezier(.2,.8,.3,1)' });
   }
   const f = document.createElement('div');
-  f.className = 'flash';
-  f.style.cssText = `left:${x - 10}px;top:${y - 10}px;border-color:${colors[0]}`;
-  f.animate([{ transform: 'scale(.5)', opacity: 1 }, { transform: 'scale(5)', opacity: 0 }], { duration: 450, easing: 'ease-out' }).onfinish = () => f.remove();
-  frag.appendChild(f);
-  el.fx.appendChild(frag);
+  f.className = 'flash'; f.style.borderColor = colors[0];
+  animateEl(f, [{ transform: `translate(${x - 10}px,${y - 10}px) scale(.5)`, opacity: 1 }, { transform: `translate(${x - 10}px,${y - 10}px) scale(5)`, opacity: 0 }], { duration: 420, easing: 'ease-out' });
 }
 function floatText(x, y, txt, color) {
   const t = document.createElement('div');
-  t.className = 'float-txt';
-  t.textContent = txt;
+  t.className = 'float-txt'; t.textContent = txt;
   if (color) t.style.color = color;
-  t.style.left = x + 'px'; t.style.top = y + 'px';
-  t.animate([
-    { transform: 'translate(-50%,0) scale(.8)', opacity: 0 },
-    { transform: 'translate(-50%,-14px) scale(1.1)', opacity: 1, offset: 0.2 },
-    { transform: 'translate(-50%,-50px) scale(1)', opacity: 0 },
-  ], { duration: 1000, easing: 'ease-out' }).onfinish = () => t.remove();
-  el.fx.appendChild(t);
+  animateEl(t, [
+    { transform: `translate(${x}px,${y}px) translate(-50%,0) scale(.8)`, opacity: 0 },
+    { transform: `translate(${x}px,${y - 14}px) translate(-50%,0) scale(1.1)`, opacity: 1, offset: 0.2 },
+    { transform: `translate(${x}px,${y - 50}px) translate(-50%,0) scale(1)`, opacity: 0 },
+  ], { duration: 950, easing: 'ease-out' });
 }
+/** Moedas voando até o contador do HUD. */
+function flyCoins(x, y, n = 8) {
+  const target = centerOf(el.coinIco);
+  n = reducedMotion() ? 3 : n;
+  for (let i = 0; i < n; i++) {
+    const c = document.createElement('div');
+    c.className = 'coin-ico fly-coin';
+    const sx = x + (Math.random() - 0.5) * 60, sy = y + (Math.random() - 0.5) * 40;
+    const a = animateEl(c, [
+      { transform: `translate(${sx - 9}px,${sy - 9}px) scale(.6)`, opacity: 0 },
+      { transform: `translate(${sx - 9}px,${sy - 30}px) scale(1)`, opacity: 1, offset: 0.25 },
+      { transform: `translate(${target.x - 9}px,${target.y - 9}px) scale(.7)`, opacity: 1 },
+    ], { duration: 650 + i * 45, easing: 'cubic-bezier(.5,0,.6,1)' });
+    a.addEventListener('finish', () => { bumpCoins(); if (i % 3 === 0) Sfx.coin(); });
+  }
+}
+let bumpAt = 0;
 function bumpCoins() {
-  el.coinsBox.classList.remove('bump'); void el.coinsBox.offsetWidth; el.coinsBox.classList.add('bump');
+  const t = performance.now();
+  if (t - bumpAt < 160) return;
+  bumpAt = t;
+  el.hudMoney.classList.remove('bump'); void el.hudMoney.offsetWidth; el.hudMoney.classList.add('bump');
 }
 
 /* =========================================================================
    10) AÇÕES DO JOGO
    ========================================================================= */
-/** Registra um novo nível alcançado (popup de desbloqueio na 1ª vez). */
+/** Registra um nível alcançado (popup de desbloqueio na 1ª vez). */
 function reachLevel(L) {
   if (L > state.maxLevel) state.maxLevel = L;
   if (!state.unlocked.includes(L)) {
     state.unlocked.push(L);
-    queuePopup(() => popupUnlock(L));
+    Bus.emit('unlock', L);
   }
 }
 
 function buyCar() {
   Sfx.init();
-  const L = buyLevel(), price = buyPrice(L), i = freeGarageIndex();
-  if (i < 0) { toast('Garagem cheia! Junte ou venda carros.'); Sfx.error(); return; }
-  if (state.coins < price) { toast('Moedas insuficientes'); Sfx.error(); return; }
-  state.coins -= price;
-  state.buys[L] = (state.buys[L] || 0) + 1;
-  state.garage[i] = L;
-  reachLevel(L);
-  renderCell(i, 'new');
+  const b = buyState();
+  if (!b.free) {
+    toast('Garagem cheia — junte carros iguais ou venda um.', 'warn');
+    Sfx.error(); shake(el.btnBuy); Input.flashPairs(); return;
+  }
+  if (!b.afford) {
+    const ips = incomePerSec(), missing = b.price - state.coins;
+    toast(`Faltam ${fmt(missing)} moedas` + (ips > 0 ? ` (~${fmtLong(missing / ips)})` : ' — coloque carros na pista'), 'warn');
+    Sfx.error(); shake(el.btnBuy); return;
+  }
+  const i = freeGarageIndex();
+  state.coins -= b.price;
+  state.buys[b.L] = (state.buys[b.L] || 0) + 1;
+  state.stats.buys++;
+  state.garage[i] = b.L;
+  reachLevel(b.L);
+  Input.clearSelection();
+  renderGarage(); renderCell(i, 'new');
   Sfx.buy(); vibrate(8);
   renderHUD();
+  Bus.emit('buy', b.L);
+  saveState();
 }
+function shake(node) { node.classList.remove('shake'); void node.offsetWidth; node.classList.add('shake'); }
 
-/** Funde dois carros de nível L e retorna o novo nível. */
-function doMerge(L, node) {
-  const nl = L + 1;
-  state.merges++;
-  const { x, y } = centerOf(node);
-  const info = carInfo(nl);
-  burst(x, y, [info.acc, '#ffffff', '#00e5ff', '#ff7a00'], 18);
-  Sfx.merge(); vibrate(20);
-  reachLevel(nl);
-  return nl;
+/** Entrega carros reservados (baú com garagem cheia) assim que houver vaga. */
+function deliverReserve() {
+  let delivered = 0;
+  while (state.reserve.length) {
+    const i = freeGarageIndex();
+    if (i < 0) break;
+    const L = state.reserve.shift();
+    state.garage[i] = L;
+    reachLevel(L);
+    renderCell(i, 'new');
+    delivered++;
+  }
+  if (delivered) toast(delivered > 1 ? `${delivered} carros da reserva chegaram!` : 'Carro da reserva chegou na garagem!', 'good');
+  const n = state.reserve.length;
+  el.reservePill.hidden = !n;
+  if (n) el.reservePill.querySelector('span').textContent = `${n} na reserva`;
 }
 
 function canMerge(a, b) { return a && a === b && a < MAX_LEVEL; }
 
-/** Resolve a soltura de um carro arrastado. src = {from:'garage'|'track', i} */
-function handleDrop(src, target) {
-  const getL = (s) => (s.from === 'garage' ? state.garage[s.i] : state.track[s.i]);
-  const setL = (s, v) => { if (s.from === 'garage') state.garage[s.i] = v; else state.track[s.i] = v; };
-  const nodeOf = (s) => (s.from === 'garage' ? cellEls[s.i] : chipEls[s.i]);
+/** Lê/escreve um "endereço" de carro: {from:'garage'|'track', i} */
+const getL = (s) => (s.from === 'garage' ? state.garage[s.i] : state.track[s.i]);
+const setL = (s, v) => { if (s.from === 'garage') state.garage[s.i] = v; else state.track[s.i] = v; };
+const nodeOf = (s) => (s.from === 'garage' ? cellEls[s.i] : chipEls[s.i]);
+const sameSlot = (a, b) => !!(a && b && a.from && a.from === b.from && a.i === b.i);
+
+/**
+ * O que aconteceria soltando `src` em `tgt` (sem alterar nada).
+ * Usado no rótulo durante o arraste e para executar a ação.
+ */
+function describeDrop(src, tgt) {
   const L = getL(src);
-  if (!L || !target) return;
+  if (!tgt || !L) return { kind: 'none' };
+  if (tgt.type === 'trash') {
+    if (totalCars() <= 1) return { kind: 'bad', text: 'ÚLTIMO CARRO' };
+    return { kind: 'sell', text: 'VENDER +' + fmt(sellPrice(L)) };
+  }
+  if (tgt.type === 'track') {
+    if (src.from === 'track') return { kind: 'none' };
+    return freeTrackIndex() < 0 ? { kind: 'bad', text: 'PISTA LOTADA' } : { kind: 'track', text: 'PISTA' };
+  }
+  if (sameSlot(src, tgt)) return { kind: 'none' };
+  if (tgt.from === 'garage' && tgt.i >= garageSlots()) return { kind: 'bad', text: 'BLOQUEADA' };
+  if (tgt.from === 'track' && tgt.i >= trackSlots()) return { kind: 'bad', text: 'BLOQUEADA' };
+  const T = getL(tgt);
+  if (!T) return tgt.from === 'track' && src.from === 'garage' ? { kind: 'track', text: 'PISTA' } : { kind: 'move', text: 'MOVER' };
+  if (canMerge(L, T)) return { kind: 'merge', text: `FUNDIR → Lv ${L + 1}` };
+  return { kind: 'swap', text: L === T ? 'NÍVEL MÁXIMO' : 'TROCAR' };
+}
 
-  // Vender
-  if (target.type === 'trash') {
-    if (totalCars() <= 1) { toast('Você precisa de pelo menos 1 carro!'); Sfx.error(); return; }
-    const v = sellPrice(L);
-    setL(src, 0);
-    addCoins(v);
-    const c = centerOf(el.trash);
-    floatText(c.x, c.y - 20, '+' + fmt(v));
-    Sfx.sell(); bumpCoins();
-    return afterChange();
+/**
+ * Executa a soltura. Retorna { ok, node } — node é onde o carro terminou
+ * (para a animação do fantasma).
+ */
+function performDrop(src, tgt) {
+  const L = getL(src);
+  const d = describeDrop(src, tgt);
+  if (!L || d.kind === 'none') return { ok: false };
+  if (d.kind === 'bad') {
+    Sfx.error();
+    if (d.text === 'PISTA LOTADA') toast('Pista lotada! Amplie a pista em Upgrades.', 'warn');
+    else if (d.text === 'ÚLTIMO CARRO') toast('Você precisa de pelo menos 1 carro.', 'warn');
+    else toast('Vaga bloqueada — libere em Upgrades.', 'warn');
+    return { ok: false };
   }
 
-  // Soltou na pista (área geral): ocupa a primeira vaga livre
-  if (target.type === 'track') {
-    if (src.from === 'track') return; // já está na pista
-    const t = freeTrackIndex();
-    if (t < 0) { toast('Pista lotada! Faça upgrade de vagas.'); Sfx.error(); return; }
-    target = { from: 'track', i: t };
+  if (d.kind === 'sell') {
+    const isBest = L === state.maxLevel && countLevel(L) === 1 && L >= 4;
+    const doSell = () => {
+      if (getL(src) !== L) return;
+      const v = sellPrice(L);
+      setL(src, 0); addCoins(v); state.stats.sells++;
+      if (src.from === 'track') Track.removeCar(src.i);
+      const c = centerOf(el.trash);
+      floatText(c.x, c.y - 30, '+' + fmt(v));
+      flyCoins(c.x, c.y, 5);
+      Sfx.sell(); vibrate(10);
+      Bus.emit('sell', L);
+      afterChange();
+    };
+    if (isBest) {
+      Meta.confirm('Vender seu melhor carro?', `${carInfo(L).name} é o único Lv ${L} que você tem. A venda rende ${fmt(sellPrice(L))} moedas.`, 'VENDER', doSell);
+      return { ok: false };
+    }
+    doSell();
+    return { ok: true, node: el.trash };
   }
 
-  // Alvo é uma vaga (garagem ou pista)
-  if (target.from === 'garage' && target.i >= garageSlots()) { toast('Vaga bloqueada — veja Upgrades'); Sfx.error(); return; }
-  if (target.from === 'track' && target.i >= trackSlots()) { toast('Vaga da pista bloqueada — veja Upgrades'); Sfx.error(); return; }
-  if (target.from === src.from && target.i === src.i) return;
-
+  let target = tgt;
+  if (tgt.type === 'track') target = { from: 'track', i: freeTrackIndex() };
   const T = getL(target);
-  if (!T) { // mover
-    setL(target, L); setL(src, 0);
-    if (target.from === 'track') { Track.resetCar(target.i); Sfx.place(); } else Sfx.click();
-    afterChange(target, 'new');
-  } else if (canMerge(L, T)) { // fundir
+
+  if (d.kind === 'merge') {
     setL(src, 0);
-    setL(target, doMerge(L, nodeOf(target)));
+    if (src.from === 'track') Track.removeCar(src.i);
+    const nl = L + 1;
+    setL(target, nl);
+    state.stats.merges++;
+    const node = nodeOf(target);
+    reachLevel(nl);
     afterChange(target, 'pop');
-  } else { // trocar de lugar
-    if (L === MAX_LEVEL && T === MAX_LEVEL) toast('Nível máximo!');
-    setL(target, L); setL(src, T);
-    if (target.from === 'track') Track.resetCar(target.i);
-    if (src.from === 'track') Track.resetCar(src.i);
-    Sfx.click();
-    afterChange(target, 'new');
+    const { x, y } = centerOf(node);
+    const info = carInfo(nl);
+    burst(x, y, [info.acc, '#ffffff', '#00e5ff', '#ff7a00']);
+    floatText(x, y - 20, 'Lv ' + nl + '!', info.tier === 2 ? '#7ff6ff' : '#ffcf3a');
+    Sfx.merge(); vibrate([12, 30, 18]);
+    Bus.emit('merge', nl);
+    return { ok: true, node, merged: true };
   }
+  // mover ou trocar
+  setL(target, L); setL(src, T || 0);
+  if (target.from === 'track') { Track.resetCar(target.i); Sfx.place(); Bus.emit('track', L); }
+  else Sfx.click();
+  if (src.from === 'track') { if (T) Track.resetCar(src.i); else Track.removeCar(src.i); }
+  state.stats.bestTrack = Math.max(state.stats.bestTrack, carsOnTrack());
+  afterChange(target, 'new');
+  return { ok: true, node: nodeOf(target) };
 }
 
 function afterChange(target, anim) {
+  deliverReserve();
   renderGarage(); renderPit();
   if (target && target.from === 'garage') renderCell(target.i, anim);
-  if (target && target.from === 'track' && anim === 'pop') {
-    const c = chipEls[target.i];
-    c.animate([{ transform: 'scale(1.6)' }, { transform: 'scale(1)' }], { duration: 400, easing: 'cubic-bezier(.2,1.6,.4,1)' });
-  }
+  if (target && target.from === 'track') chipEls[target.i].animate([{ transform: 'scale(1.5)' }, { transform: 'scale(1)' }], { duration: 350, easing: 'cubic-bezier(.2,1.6,.4,1)' });
   renderHUD();
   saveState();
 }
@@ -505,168 +688,346 @@ function afterChange(target, anim) {
 function activateNitro() {
   Sfx.init();
   const t = now();
-  if (t < state.nitroUntil) return;
-  if (t < state.nitroReadyAt) { toast(`Nitro recarregando: ${fmtTime((state.nitroReadyAt - t) / 1000)}`); Sfx.error(); return; }
-  if (!state.track.some(Boolean)) { toast('Coloque um carro na pista primeiro!'); Sfx.error(); return; }
+  if (t < state.nitroUntil) { toast(`Nitro ativo: ${Math.ceil((state.nitroUntil - t) / 1000)}s restantes`); return; }
+  if (t < state.nitroReadyAt) { toast(`Nitro recarregando — pronto em ${fmtTime((state.nitroReadyAt - t) / 1000)}`); Sfx.error(); return; }
+  if (!carsOnTrack()) { toast('Coloque um carro na pista primeiro!', 'warn'); Sfx.error(); return; }
   state.nitroUntil = t + CONFIG.nitro.duration * 1000;
   state.nitroReadyAt = state.nitroUntil + CONFIG.nitro.cooldown * 1000;
+  state.stats.nitros++;
   Sfx.nitro(); vibrate([20, 40, 20]);
   const c = centerOf(el.btnNitro);
   burst(c.x, c.y, ['#00e5ff', '#ffffff', '#0077ff'], 20);
+  Track.nitroKick();
+  Bus.emit('nitro');
   saveState(); renderHUD();
 }
 
 function buyUpgrade(key) {
   const u = CONFIG.upgrades[key];
-  if (state.upg[key] >= u.max) return;
+  if (state.upg[key] >= u.max) return false;
   const cost = upgradeCost(key);
-  if (state.coins < cost) { Sfx.error(); return; }
+  if (state.coins < cost) { Sfx.error(); return false; }
   state.coins -= cost;
   state.upg[key]++;
   Sfx.upgrade(); vibrate(10);
+  deliverReserve();
   renderGarage(); renderPit(); renderHUD(); saveState();
+  Bus.emit('upgrade', key);
+  return true;
 }
 
 /* =========================================================================
-   11) ARRASTAR E SOLTAR (Pointer Events: toque + mouse)
+   11) INTERAÇÃO — arrastar (toque/mouse) + tocar para selecionar
    ========================================================================= */
-const Drag = {
-  src: null, startX: 0, startY: 0, active: false, ghost: null, hot: null, pid: null,
+const Input = {
+  sel: null,               // carro selecionado por toque {from, i}
+  d: null,                 // arraste em andamento
+  raf: 0,
 
-  start(src, e) {
-    if (this.src) return;
-    this.src = src; this.pid = e.pointerId;
-    this.startX = e.clientX; this.startY = e.clientY;
-    this.active = false;
+  /** Converte o elemento tocado em um alvo do jogo. */
+  resolve(node, x, y) {
+    if (!node || !node.closest) return null;
+    const cell = node.closest('.cell');
+    if (cell && !cell.hidden) return { from: 'garage', i: +cell.dataset.i };
+    const chip = node.closest('.chip');
+    if (chip && chip.style.visibility !== 'hidden') return { from: 'track', i: +chip.dataset.t };
+    if (node.closest('#trash')) return { type: 'trash' };
+    if (node.closest('#trackWrap')) {
+      const i = Track.hitTest(x, y);
+      if (i >= 0) return { from: 'track', i };
+      return { type: 'track' };
+    }
+    if (node.closest('#pit')) return { type: 'track' };
+    return null;
+  },
+
+  bind() {
+    el.game.addEventListener('pointerdown', (e) => this.down(e));
+    // iOS: impede rolagem/zoom do navegador fora das listas roláveis
+    document.addEventListener('touchmove', (e) => {
+      if (this.d || !e.target.closest || !e.target.closest('.sheet-body, .modal-body, .range')) e.preventDefault();
+    }, { passive: false });
+    document.addEventListener('gesturestart', (e) => e.preventDefault());
+    document.addEventListener('dblclick', (e) => e.preventDefault());
+    document.addEventListener('contextmenu', (e) => { if (!e.target.closest || !e.target.closest('textarea, input')) e.preventDefault(); });
+    window.addEventListener('blur', () => this.cancel());
+  },
+
+  down(e) {
+    if (this.d || Meta.layerOpen() || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    const t = this.resolve(e.target, e.clientX, e.clientY);
+    if (!t) return;
+    Sfx.init();
+    const lockedCell = t.from === 'garage' && t.i >= garageSlots();
+    const lockedChip = t.from === 'track' && t.i >= trackSlots();
+    if (t.type || lockedCell || lockedChip || !getL(t)) {
+      // vaga vazia/bloqueada, lixeira ou pista: só interessa como toque
+      const p = { t, x: e.clientX, y: e.clientY, pid: e.pointerId };
+      const up = (ev) => {
+        if (ev.pointerId !== p.pid) return;
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', up);
+        if (ev.type === 'pointerup' && Math.hypot(ev.clientX - p.x, ev.clientY - p.y) < 14) this.tapEmpty(p.t, lockedCell || lockedChip);
+      };
+      window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', up);
+      return;
+    }
+    e.preventDefault();
+    this.d = {
+      src: { from: t.from, i: t.i }, pid: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY,
+      active: false, touch: e.pointerType !== 'mouse', ghost: null, tag: null, hot: null, targets: null,
+    };
     window.addEventListener('pointermove', this.onMove, { passive: false });
     window.addEventListener('pointerup', this.onUp);
     window.addEventListener('pointercancel', this.onCancel);
   },
-  level() { return this.src.from === 'garage' ? state.garage[this.src.i] : state.track[this.src.i]; },
-  srcNode() { return this.src.from === 'garage' ? cellEls[this.src.i] : chipEls[this.src.i]; },
-
-  begin() {
-    this.active = true;
-    Sfx.init();
-    const L = this.level();
-    this.ghost = document.createElement('div');
-    this.ghost.className = 'ghost';
-    this.ghost.innerHTML = `<img src="${carAsset(L).url}" alt="">`;
-    el.fx.appendChild(this.ghost);
-    this.srcNode().classList.add('dragging');
-    if (this.src.from === 'track') Track.hidden = this.src.i;
-    // destaca carros iguais (possível merge)
-    if (L < MAX_LEVEL) {
-      state.garage.forEach((v, i) => { if (v === L && i < garageSlots() && !(this.src.from === 'garage' && this.src.i === i)) cellEls[i].classList.add('match'); });
-      state.track.forEach((v, i) => { if (v === L && i < trackSlots() && !(this.src.from === 'track' && this.src.i === i)) chipEls[i].classList.add('match'); });
-    }
-  },
 
   onMove: (e) => {
-    const d = Drag;
-    if (e.pointerId !== d.pid) return;
+    const d = Input.d;
+    if (!d || e.pointerId !== d.pid) return;
+    if (e.cancelable) e.preventDefault();
+    d.x = e.clientX; d.y = e.clientY;
     if (!d.active) {
-      if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < 6) return;
-      d.begin();
+      if (Math.hypot(d.x - d.x0, d.y - d.y0) < (d.touch ? 9 : 5)) return;
+      Input.begin();
     }
-    e.preventDefault();
-    d.ghost.style.transform = `translate(${e.clientX - 55}px, ${e.clientY - 40}px) rotate(-4deg)`;
-    const tgt = d.targetAt(e.clientX, e.clientY);
-    const node = tgt ? tgt.node : null;
-    if (node !== d.hot) {
-      if (d.hot) d.hot.classList.remove('hot', 'drop-hot');
-      d.hot = node;
-      if (node) node.classList.add(node === el.trackWrap || node === el.pit ? 'drop-hot' : 'hot');
-    }
+    if (!Input.raf) Input.raf = requestAnimationFrame(() => { Input.raf = 0; Input.update(); });
   },
 
   onUp: (e) => {
-    const d = Drag;
-    if (e.pointerId !== d.pid) return;
-    const src = d.src, wasActive = d.active;
-    const tgt = wasActive ? d.targetAt(e.clientX, e.clientY) : null;
-    d.end();
-    if (wasActive) handleDrop(src, tgt);
-    else d.tap(src);
+    const d = Input.d;
+    if (!d || e.pointerId !== d.pid) return;
+    if (!d.active) { const src = d.src; Input.end(); Input.tapCar(src); return; }
+    d.x = e.clientX; d.y = e.clientY;
+    Input.update();
+    const tgt = d.hot ? d.hot.t : null, src = d.src, ghost = d.ghost;
+    d.ghost = null;                       // a animação final cuida do fantasma
+    Input.end();
+    const r = tgt ? performDrop(src, tgt) : { ok: false };
+    Input.finishGhost(ghost, r.ok ? r.node : nodeOf(src), r.ok, r.ok ? null : src);
   },
-  onCancel: () => Drag.end(),
+  onCancel: (e) => { if (Input.d && (!e || e.pointerId === Input.d.pid)) Input.cancel(); },
 
-  /** Toque rápido: mostra o nome do carro. */
-  tap(src) {
-    const L = src.from === 'garage' ? state.garage[src.i] : state.track[src.i];
-    if (!L) return;
-    Sfx.init(); Sfx.click();
-    const info = carInfo(L);
-    toast(`${info.name} · Cap. ${info.chapter} — ${fmt(incomePerLap(L))}/volta`);
+  cancel() {
+    const d = this.d;
+    if (!d) return;
+    const ghost = d.ghost, src = d.src;
+    d.ghost = null;
+    this.end();
+    if (ghost) this.finishGhost(ghost, nodeOf(src), false, src);
   },
 
-  /** Descobre o alvo embaixo do dedo/mouse. */
+  begin() {
+    const d = this.d, L = getL(d.src);
+    d.active = true;
+    this.clearSelection();
+    // fantasma do tamanho da vaga, levantado acima do dedo no toque
+    const ref = cellEls[0].getBoundingClientRect();
+    const w = clamp(ref.width * 1.15, 96, 170), h = w / 2;
+    d.gw = w; d.gh = h;
+    d.lift = d.touch ? h * 0.75 + 16 : 0;
+    const g = document.createElement('div');
+    g.className = 'ghost';
+    g.style.width = w + 'px'; g.style.height = h + 'px';
+    g.innerHTML = `<img src="${carAsset(L).url}" alt=""><div class="ghost-tag" hidden></div>`;
+    el.fx.appendChild(g);
+    d.ghost = g; d.tag = g.querySelector('.ghost-tag');
+    nodeOf(d.src).classList.add('dragging');
+    if (d.src.from === 'track') Track.hidden = d.src.i;
+    this.markMatches(L, d.src);
+    this.collectTargets();
+    Sfx.select(); vibrate(6);
+  },
+
+  /** Retângulos dos alvos calculados uma vez por arraste (sem reflow no movimento). */
+  collectTargets() {
+    const list = [];
+    for (let i = 0; i < visibleCells(); i++) list.push({ t: { from: 'garage', i }, node: cellEls[i], r: cellEls[i].getBoundingClientRect() });
+    for (let i = 0; i < chipEls.length; i++) if (chipEls[i].style.visibility !== 'hidden') list.push({ t: { from: 'track', i }, node: chipEls[i], r: chipEls[i].getBoundingClientRect() });
+    list.push({ t: { type: 'trash' }, node: el.trash, r: el.trash.getBoundingClientRect() });
+    this.d.targets = list;
+    this.d.trackR = el.trackWrap.getBoundingClientRect();
+    this.d.pitR = el.pit.getBoundingClientRect();
+  },
+
+  /** Alvo tolerante: dentro do retângulo (com folga) ou o centro mais próximo. */
   targetAt(x, y) {
-    const n = document.elementFromPoint(x, y);
-    if (!n) return null;
-    const cell = n.closest('.cell');
-    if (cell) return { from: 'garage', i: +cell.dataset.i, node: cell };
-    const chip = n.closest('.chip');
-    if (chip && chip.style.visibility !== 'hidden') return { from: 'track', i: +chip.dataset.t, node: chip };
-    if (n.closest('#trash')) return { type: 'trash', node: el.trash };
-    if (n.closest('#trackWrap') || n.closest('#pit')) return { type: 'track', node: el.trackWrap };
-    return null;
+    const d = this.d;
+    let best = null, bd = Infinity;
+    for (const o of d.targets) {
+      const r = o.r, pad = 8;
+      if (x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad) {
+        const dd = Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2));
+        if (dd < bd) { bd = dd; best = o; }
+      }
+    }
+    if (best) return best;
+    const inR = (r) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    if (inR(d.trackR) || inR(d.pitR)) return { t: { type: 'track' }, node: el.trackWrap };
+    // perto de uma vaga (um pouco fora): aceita a mais próxima
+    for (const o of d.targets) {
+      const r = o.r, dd = Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2));
+      if (dd < Math.max(r.width, r.height) * 0.7 && dd < bd) { bd = dd; best = o; }
+    }
+    return best;
+  },
+
+  update() {
+    const d = this.d;
+    if (!d || !d.active || !d.ghost) return;
+    const cx = d.x, cy = d.y - d.lift;
+    d.ghost.style.transform = `translate(${cx - d.gw / 2}px, ${cy - d.gh / 2}px) rotate(-3deg)`;
+    const hot = this.targetAt(cx, cy);
+    const key = hot ? (hot.t.type || hot.t.from + hot.t.i) : '';
+    if (key === d.hotKey) return;
+    d.hotKey = key;
+    if (d.hot) d.hot.node.classList.remove('hot', 'hot-bad', 'drop-ok', 'drop-bad');
+    d.hot = hot;
+    const desc = hot ? describeDrop(d.src, hot.t) : { kind: 'none' };
+    if (hot) {
+      if (hot.node === el.trackWrap) hot.node.classList.add(desc.kind === 'bad' ? 'drop-bad' : 'drop-ok');
+      else if (desc.kind !== 'none') hot.node.classList.add(desc.kind === 'bad' ? 'hot-bad' : 'hot');
+    }
+    const tag = d.tag;
+    if (desc.kind === 'none') { tag.hidden = true; return; }
+    tag.hidden = false;
+    tag.className = 'ghost-tag ' + ({ merge: 'merge', track: 'track', sell: 'sell', bad: 'bad' }[desc.kind] || '');
+    const ic = { merge: 'up', track: 'road', sell: 'trash', bad: 'close', swap: 'swap', move: 'garage' }[desc.kind];
+    tag.innerHTML = icon(ic) + desc.text;
+    if (desc.kind === 'merge') vibrate(4);
+  },
+
+  /** Anima o fantasma até o destino (ok) ou de volta à origem (cancelado). */
+  finishGhost(ghost, node, ok, srcBack) {
+    if (!ghost) return;
+    const tag = ghost.querySelector('.ghost-tag'); if (tag) tag.hidden = true;
+    const r = node.getBoundingClientRect();
+    const w = parseFloat(ghost.style.width), h = parseFloat(ghost.style.height);
+    const to = `translate(${r.left + r.width / 2 - w / 2}px, ${r.top + r.height / 2 - h / 2}px)`;
+    const from = ghost.style.transform || to;
+    const backNode = srcBack ? nodeOf(srcBack) : null;
+    if (backNode) backNode.classList.add('dragging');
+    if (srcBack && srcBack.from === 'track') Track.hidden = srcBack.i;
+    const a = ghost.animate(
+      ok ? [{ transform: from, opacity: 1 }, { transform: to + ' scale(.55)', opacity: 0 }]
+        : [{ transform: from, opacity: 1 }, { transform: to + ' scale(.85)', opacity: 0.9 }],
+      { duration: ok ? 150 : 210, easing: ok ? 'ease-in' : 'cubic-bezier(.3,.8,.4,1)' });
+    let finished = false;
+    const done = () => {
+      if (finished) return; finished = true;
+      ghost.remove();
+      if (backNode && !this.d) backNode.classList.remove('dragging');
+      if (srcBack && !this.d) Track.hidden = -1;
+    };
+    a.onfinish = done; a.oncancel = done;
+    setTimeout(done, 400);   // garantia: nunca deixa carro "preso" invisível
   },
 
   end() {
+    const d = this.d;
     window.removeEventListener('pointermove', this.onMove);
     window.removeEventListener('pointerup', this.onUp);
     window.removeEventListener('pointercancel', this.onCancel);
-    if (this.ghost) this.ghost.remove();
-    if (this.hot) this.hot.classList.remove('hot', 'drop-hot');
-    if (this.src) this.srcNode().classList.remove('dragging');
-    document.querySelectorAll('.match').forEach((n) => n.classList.remove('match'));
+    if (this.raf) { cancelAnimationFrame(this.raf); this.raf = 0; }
+    if (d) {
+      if (d.ghost) d.ghost.remove();
+      if (d.hot) d.hot.node.classList.remove('hot', 'hot-bad', 'drop-ok', 'drop-bad');
+      nodeOf(d.src).classList.remove('dragging');
+    }
+    el.trackWrap.classList.remove('drop-ok', 'drop-bad');
+    this.unmarkMatches();
     Track.hidden = -1;
-    this.ghost = null; this.hot = null; this.src = null; this.active = false;
+    this.d = null;
+  },
+
+  markMatches(L, src) {
+    if (L >= MAX_LEVEL) return;
+    state.garage.forEach((v, i) => { if (v === L && i < garageSlots() && !(src.from === 'garage' && src.i === i)) cellEls[i].classList.add('match'); });
+    state.track.forEach((v, i) => { if (v === L && i < trackSlots() && !(src.from === 'track' && src.i === i)) chipEls[i].classList.add('match'); });
+  },
+  unmarkMatches() { document.querySelectorAll('.match').forEach((n) => n.classList.remove('match')); },
+
+  /** Pisca os pares possíveis (ex.: garagem cheia). */
+  flashPairs() {
+    const seen = {};
+    state.garage.forEach((v, i) => { if (v && i < garageSlots()) (seen[v] = seen[v] || []).push(cellEls[i]); });
+    Object.entries(seen).filter(([L, a]) => a.length > 1 && +L < MAX_LEVEL).forEach(([, a]) => a.forEach((n) => n.classList.add('match')));
+    setTimeout(() => { if (!this.d && !this.sel) this.unmarkMatches(); }, 1400);
+  },
+
+  /* ---- modo "tocar para selecionar" (uma mão, sem arrastar) ---- */
+  tapCar(src) {
+    const L = getL(src);
+    if (!L) return;
+    if (this.sel && sameSlot(this.sel, src)) { this.clearSelection(); Sfx.click(); return; }
+    if (this.sel) { this.applyTo(src); return; }
+    this.sel = { from: src.from, i: src.i };
+    this.refreshSelection();
+    Sfx.select(); vibrate(5);
+    const info = carInfo(L);
+    toast(`${info.name} · ${fmt(incomePerLap(L))}/volta — toque no destino`);
+    Bus.emit('select', src);
+  },
+  tapEmpty(t, locked) {
+    if (this.sel) { this.applyTo(t); return; }
+    if (locked) { Meta.openUpgrades(); return; }
+    if (t.type === 'trash') { toast('Arraste um carro até aqui para vender.'); Sfx.click(); }
+  },
+  applyTo(tgt) {
+    const src = this.sel;
+    this.clearSelection();
+    if (!src || !getL(src)) return;
+    if (describeDrop(src, tgt).kind === 'none') return;
+    // fantasma voando da origem ao destino (mesmo feedback do arraste)
+    const L = getL(src), from = nodeOf(src).getBoundingClientRect();
+    const r = performDrop(src, tgt);
+    if (!r.ok) return;
+    const w = clamp(from.width, 80, 150), h = w / 2;
+    const g = document.createElement('div');
+    g.className = 'ghost'; g.style.width = w + 'px'; g.style.height = h + 'px';
+    g.style.transform = `translate(${from.left + from.width / 2 - w / 2}px, ${from.top + from.height / 2 - h / 2}px)`;
+    g.innerHTML = `<img src="${carAsset(L).url}" alt="">`;
+    el.fx.appendChild(g);
+    this.finishGhost(g, r.node, true);
+  },
+  clearSelection() {
+    if (!this.sel) return;
+    this.sel = null;
+    this.refreshSelection();
+  },
+  refreshSelection() {
+    document.querySelectorAll('.selected').forEach((n) => n.classList.remove('selected'));
+    if (this.d) return;
+    this.unmarkMatches();
+    if (!this.sel) return;
+    const L = getL(this.sel);
+    if (!L) { this.sel = null; return; }
+    nodeOf(this.sel).classList.add('selected');
+    this.markMatches(L, this.sel);
   },
 };
-
-function bindDrag() {
-  el.garage.addEventListener('pointerdown', (e) => {
-    const c = e.target.closest('.cell');
-    if (!c) return;
-    const i = +c.dataset.i;
-    if (i < garageSlots() && state.garage[i]) { e.preventDefault(); Drag.start({ from: 'garage', i }, e); }
-  });
-  el.pit.addEventListener('pointerdown', (e) => {
-    const c = e.target.closest('.chip');
-    if (!c) return;
-    const i = +c.dataset.t;
-    if (i < trackSlots() && state.track[i]) { e.preventDefault(); Drag.start({ from: 'track', i }, e); }
-  });
-  // Pegar um carro diretamente na pista (canvas)
-  el.canvas.addEventListener('pointerdown', (e) => {
-    const i = Track.hitTest(e.clientX, e.clientY);
-    if (i >= 0) { e.preventDefault(); Drag.start({ from: 'track', i }, e); }
-  });
-}
 
 /* =========================================================================
    12) PISTA — Canvas 2D (cidade noturna, asfalto molhado, carros correndo)
    ========================================================================= */
 const Track = {
   ctx: null, w: 0, h: 0, dpr: 1,
-  bg: null,                 // canvas offscreen com o cenário pré-renderizado
-  pts: [],                  // amostras do traçado {x,y,a(ângulo),s(persp)}
+  bg: null, glow: null,
+  pts: [],
   prog: new Array(CONFIG.trackSlots.max).fill(0),
-  sparks: [], floats: [], rain: [],
-  hidden: -1,               // carro escondido enquanto é arrastado
-  positions: [],            // posição atual na tela (hit test)
+  sparks: [], floats: [], rain: [], lines: [], ripples: [],
+  hidden: -1, positions: [], time: 0, ready: false,
 
   init() {
-    this.ctx = el.canvas.getContext('2d');
+    this.ctx = el.canvas.getContext('2d', { alpha: false });
     for (let i = 0; i < this.prog.length; i++) this.prog[i] = i / this.prog.length;
-    const ro = new ResizeObserver(() => this.resize());
-    ro.observe(el.trackWrap);
-    this.resize();
+    if (window.ResizeObserver) new ResizeObserver(() => this.resize()).observe(el.trackWrap);
+    this.resize(true);
+    this.ready = true;
   },
 
-  /** Coloca o carro no meio do maior espaço livre entre os outros carros. */
+  /** Coloca o carro no meio do maior espaço livre entre os outros. */
   resetCar(i) {
     const others = [];
     for (let k = 0; k < trackSlots(); k++) if (k !== i && state.track[k]) others.push(((this.prog[k] % 1) + 1) % 1);
@@ -679,28 +1040,45 @@ const Track = {
     }
     this.prog[i] = best % 1;
   },
+  removeCar(i) { this.positions[i] = null; },
+  nitroKick() { if (!reducedMotion()) for (let i = 0; i < 18; i++) this.spawnLine(true); },
 
-  resize() {
+  resize(force) {
     const r = el.trackWrap.getBoundingClientRect();
     if (!r.width || !r.height) return;
-    this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, Q().dpr);
+    if (!force && Math.abs(r.width - this.w) < 1 && Math.abs(r.height - this.h) < 1 && dpr === this.dpr) return;
+    this.dpr = dpr;
     this.w = r.width; this.h = r.height;
-    el.canvas.width = Math.round(this.w * this.dpr);
-    el.canvas.height = Math.round(this.h * this.dpr);
+    el.canvas.width = Math.round(this.w * dpr);
+    el.canvas.height = Math.round(this.h * dpr);
     this.buildPath();
     this.buildBackground();
-    this.rain = Array.from({ length: 36 }, () => ({ x: Math.random() * this.w, y: Math.random() * this.h, v: 380 + Math.random() * 220, l: 6 + Math.random() * 8 }));
+    this.rain = Array.from({ length: Q().rain }, () => ({ x: Math.random() * this.w, y: Math.random() * this.h, v: 380 + Math.random() * 220, l: 6 + Math.random() * 8 }));
+    if (!this.glow) this.glow = this.makeGlow();
+    if (this.ready) this.draw();
   },
 
-  /** Traçado do circuito: spline Catmull-Rom fechada, com perspectiva. */
+  /** Sprite de farol (cone de luz) criado uma vez. */
+  makeGlow() {
+    const c = document.createElement('canvas'); c.width = 128; c.height = 64;
+    const g = c.getContext('2d');
+    const gr = g.createRadialGradient(0, 32, 2, 0, 32, 120);
+    gr.addColorStop(0, 'rgba(255,245,200,.55)'); gr.addColorStop(0.4, 'rgba(255,240,190,.18)'); gr.addColorStop(1, 'rgba(255,240,190,0)');
+    g.fillStyle = gr;
+    g.beginPath(); g.moveTo(0, 26); g.lineTo(128, 0); g.lineTo(128, 64); g.lineTo(0, 38); g.closePath(); g.fill();
+    return c;
+  },
+
+  /** Traçado: spline Catmull-Rom fechada com perspectiva. */
   buildPath() {
     const W = this.w, H = this.h;
-    const ctrl = [
-      [0.10, 0.70], [0.13, 0.52], [0.28, 0.44], [0.46, 0.47], [0.60, 0.42], [0.76, 0.43],
-      [0.86, 0.55], [0.84, 0.74], [0.70, 0.86], [0.50, 0.88], [0.30, 0.89], [0.15, 0.84],
-    ].map(([x, y]) => [x * W, y * H]);
-    const raw = [];
-    const n = ctrl.length, steps = 40;
+    const wide = W / H > 1.9;   // pista mais larga quando há espaço (celular deitado / desktop)
+    const base = wide
+      ? [[0.08, 0.66], [0.11, 0.46], [0.27, 0.38], [0.46, 0.42], [0.60, 0.35], [0.78, 0.37], [0.90, 0.52], [0.87, 0.75], [0.70, 0.88], [0.50, 0.90], [0.30, 0.91], [0.13, 0.85]]
+      : [[0.10, 0.70], [0.13, 0.52], [0.28, 0.44], [0.46, 0.47], [0.60, 0.42], [0.76, 0.43], [0.86, 0.55], [0.84, 0.74], [0.70, 0.86], [0.50, 0.88], [0.30, 0.89], [0.15, 0.84]];
+    const ctrl = base.map(([x, y]) => [x * W, y * H]);
+    const raw = [], n = ctrl.length, steps = 40;
     for (let i = 0; i < n; i++) {
       const p0 = ctrl[(i - 1 + n) % n], p1 = ctrl[i], p2 = ctrl[(i + 1) % n], p3 = ctrl[(i + 2) % n];
       for (let k = 0; k < steps; k++) {
@@ -711,7 +1089,6 @@ const Track = {
         ]);
       }
     }
-    // Reamostra com espaçamento uniforme (velocidade constante)
     const len = [0];
     for (let i = 1; i <= raw.length; i++) {
       const a = raw[i - 1], b = raw[i % raw.length];
@@ -721,22 +1098,22 @@ const Track = {
     this.pts = [];
     let j = 0;
     for (let k = 0; k < N; k++) {
-      const d = (k / N) * total;
-      while (len[j + 1] < d) j++;
+      const dd = (k / N) * total;
+      while (len[j + 1] < dd) j++;
       const a = raw[j], b = raw[(j + 1) % raw.length];
-      const f = (d - len[j]) / (len[j + 1] - len[j] || 1);
+      const f = (dd - len[j]) / (len[j + 1] - len[j] || 1);
       this.pts.push({ x: a[0] + (b[0] - a[0]) * f, y: a[1] + (b[1] - a[1]) * f });
     }
     for (let k = 0; k < N; k++) {
       const p = this.pts[k], q = this.pts[(k + 1) % N], o = this.pts[(k - 1 + N) % N];
       p.a = Math.atan2(q.y - o.y, q.x - o.x);
-      p.s = 0.62 + 0.55 * (p.y / H);   // perspectiva: mais perto = maior
+      p.s = 0.62 + 0.55 * (p.y / H);
     }
   },
 
   roadWidth(p) { return Math.min(this.w, this.h * 1.6) * 0.085 * p.s; },
 
-  /** Pré-renderiza o cenário (céu, prédios, asfalto, postes) uma única vez. */
+  /** Cenário pré-renderizado (céu, prédios, asfalto, postes) — só no resize. */
   buildBackground() {
     const W = this.w, H = this.h, d = this.dpr;
     const c = this.bg || (this.bg = document.createElement('canvas'));
@@ -745,42 +1122,34 @@ const Track = {
     g.setTransform(d, 0, 0, d, 0, 0);
     const R = rng(1337);
 
-    // Céu
     let gr = g.createLinearGradient(0, 0, 0, H);
     gr.addColorStop(0, '#02030b'); gr.addColorStop(0.35, '#071443'); gr.addColorStop(0.5, '#0d2a6e'); gr.addColorStop(0.62, '#04081c'); gr.addColorStop(1, '#02040c');
     g.fillStyle = gr; g.fillRect(0, 0, W, H);
-    // Estrelas
-    g.fillStyle = '#ffffff';
-    for (let i = 0; i < 40; i++) { g.globalAlpha = 0.2 + R() * 0.6; g.fillRect(R() * W, R() * H * 0.3, 1, 1); }
+    g.fillStyle = '#fff';
+    for (let i = 0; i < 50; i++) { g.globalAlpha = 0.2 + R() * 0.6; g.fillRect(R() * W, R() * H * 0.3, 1, 1); }
     g.globalAlpha = 1;
-    // Lua
     g.fillStyle = '#d9ecff'; g.shadowColor = '#9fd4ff'; g.shadowBlur = 20;
     g.beginPath(); g.arc(W * 0.18, H * 0.12, Math.max(6, H * 0.04), 0, Math.PI * 2); g.fill();
     g.shadowBlur = 0;
-    // Brilho do horizonte (cidade)
     gr = g.createRadialGradient(W * 0.5, H * 0.42, 10, W * 0.5, H * 0.42, W * 0.7);
     gr.addColorStop(0, 'rgba(0,180,255,.35)'); gr.addColorStop(0.5, 'rgba(255,90,0,.12)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = gr; g.fillRect(0, 0, W, H * 0.6);
 
-    // Prédios: 2 camadas (fundo e frente)
-    const horizon = H * 0.44;
+    let minY = Infinity;
+    for (const p of this.pts) minY = Math.min(minY, p.y);
+    const horizon = minY - this.roadWidth(this.pts[0]) * 0.6;
     const layer = (hMin, hMax, wMin, wMax, col, winA) => {
       let x = -10;
       while (x < W + 10) {
         const bw = wMin + R() * (wMax - wMin), bh = hMin + R() * (hMax - hMin);
         g.fillStyle = col; g.fillRect(x, horizon - bh, bw, bh + 4);
-        if (R() < 0.3) { g.fillRect(x + bw * 0.4, horizon - bh - 8, 2, 8); } // antena
-        // janelas
+        if (R() < 0.3) g.fillRect(x + bw * 0.4, horizon - bh - 8, 2, 8);
         for (let wy = horizon - bh + 4; wy < horizon - 3; wy += 5) {
           for (let wx = x + 3; wx < x + bw - 3; wx += 4) {
-            if (R() < winA) {
-              g.fillStyle = R() < 0.8 ? 'rgba(255,214,120,.85)' : 'rgba(120,230,255,.9)';
-              g.fillRect(wx, wy, 2, 2);
-            }
+            if (R() < winA) { g.fillStyle = R() < 0.8 ? 'rgba(255,214,120,.85)' : 'rgba(120,230,255,.9)'; g.fillRect(wx, wy, 2, 2); }
           }
         }
-        // letreiro neon (sem texto)
-        if (R() < 0.18 && bh > hMin + 6) {
+        if (R() < 0.2 && bh > hMin + 6) {
           const nc = ['#ff2bd6', '#00e5ff', '#ff7a00', '#7cff4f'][Math.floor(R() * 4)];
           g.shadowColor = nc; g.shadowBlur = 10; g.fillStyle = nc;
           g.fillRect(x + 2, horizon - bh + 6, Math.max(4, bw - 6), 3);
@@ -792,37 +1161,39 @@ const Track = {
     layer(H * 0.12, H * 0.30, 14, 30, '#0a1538', 0.12);
     layer(H * 0.06, H * 0.20, 18, 40, '#050b22', 0.22);
 
-    // Chão (asfalto molhado geral)
     gr = g.createLinearGradient(0, horizon, 0, H);
     gr.addColorStop(0, '#060b1d'); gr.addColorStop(1, '#0a0f22');
     g.fillStyle = gr; g.fillRect(0, horizon, W, H - horizon);
-    // Reflexo da cidade no chão molhado
     gr = g.createLinearGradient(0, horizon, 0, horizon + H * 0.15);
     gr.addColorStop(0, 'rgba(0,160,255,.22)'); gr.addColorStop(1, 'rgba(0,160,255,0)');
     g.fillStyle = gr; g.fillRect(0, horizon, W, H * 0.15);
 
-    // Pista: bordas externa e interna calculadas pelas normais
     const P = this.pts, N = P.length;
-    const edge = (off) => P.map((p) => {
-      const w = this.roadWidth(p) * off;
-      return [p.x + Math.cos(p.a + Math.PI / 2) * w, p.y + Math.sin(p.a + Math.PI / 2) * w];
-    });
+    const edge = (off) => P.map((p) => { const w = this.roadWidth(p) * off; return [p.x + Math.cos(p.a + Math.PI / 2) * w, p.y + Math.sin(p.a + Math.PI / 2) * w]; });
     const outer = edge(1), inner = edge(-1), outer2 = edge(1.25), inner2 = edge(-1.25);
     const poly = (arr) => { g.moveTo(arr[0][0], arr[0][1]); for (let i = 1; i < arr.length; i++) g.lineTo(arr[i][0], arr[i][1]); g.closePath(); };
 
-    // Calçada / guia
-    g.beginPath(); poly(outer2); poly(inner2);
-    g.fillStyle = '#1a2246'; g.fill('evenodd');
-    // Asfalto
+    g.beginPath(); poly(outer2); poly(inner2); g.fillStyle = '#1a2246'; g.fill('evenodd');
     g.beginPath(); poly(outer); poly(inner);
     gr = g.createLinearGradient(0, H * 0.4, 0, H);
     gr.addColorStop(0, '#141a30'); gr.addColorStop(1, '#1d2440');
     g.fillStyle = gr; g.fill('evenodd');
-    // Zebras (vermelho/branco) nas curvas: alterna ao longo da borda
+    // poças refletindo neon no asfalto molhado
+    g.save(); g.beginPath(); poly(outer); poly(inner); g.clip('evenodd');
+    g.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 9; i++) {
+      const p = P[Math.floor(R() * N)], rr = (14 + R() * 26) * p.s;
+      const col = ['0,229,255', '255,43,214', '255,122,0'][i % 3];
+      g.save(); g.translate(p.x, p.y); g.scale(1.8, 0.6);
+      const pg = g.createRadialGradient(0, 0, 1, 0, 0, rr);
+      pg.addColorStop(0, `rgba(${col},.2)`); pg.addColorStop(1, `rgba(${col},0)`);
+      g.fillStyle = pg; g.beginPath(); g.arc(0, 0, rr, 0, Math.PI * 2); g.fill();
+      g.restore();
+    }
+    g.restore();
     for (let i = 0; i < N; i += 6) {
       const k = (i + 3) % N;
-      const curv = Math.abs(Math.sin(P[k].a - P[i].a));
-      if (curv < 0.06) continue;
+      if (Math.abs(Math.sin(P[k].a - P[i].a)) < 0.06) continue;
       g.fillStyle = (i / 6) % 2 ? '#e8e8f0' : '#e0193c';
       for (const [a, b] of [[outer, outer2], [inner, inner2]]) {
         g.beginPath();
@@ -832,41 +1203,29 @@ const Track = {
         g.fill();
       }
     }
-    // Linhas de borda
     g.strokeStyle = 'rgba(230,240,255,.75)'; g.lineWidth = 1.2;
     g.beginPath(); poly(outer); g.stroke();
     g.beginPath(); poly(inner); g.stroke();
-    // Faixa central tracejada
     g.setLineDash([8, 10]); g.strokeStyle = 'rgba(255,207,58,.7)'; g.lineWidth = 1.5;
     g.beginPath(); g.moveTo(P[0].x, P[0].y); for (let i = 1; i < N; i++) g.lineTo(P[i].x, P[i].y); g.closePath(); g.stroke();
     g.setLineDash([]);
-
-    // Linha de largada quadriculada (ponto 0)
     {
       const p = P[0], w = this.roadWidth(p), nx = Math.cos(p.a + Math.PI / 2), ny = Math.sin(p.a + Math.PI / 2);
       const tx = Math.cos(p.a), ty = Math.sin(p.a), sq = (2 * w) / 6;
       for (let r = 0; r < 2; r++) for (let q = 0; q < 6; q++) {
         g.fillStyle = (r + q) % 2 ? '#fff' : '#111';
         const ox = p.x + nx * (-w + q * sq) + tx * r * sq, oy = p.y + ny * (-w + q * sq) + ty * r * sq;
-        g.beginPath();
-        g.moveTo(ox, oy); g.lineTo(ox + nx * sq, oy + ny * sq);
-        g.lineTo(ox + nx * sq + tx * sq, oy + ny * sq + ty * sq); g.lineTo(ox + tx * sq, oy + ty * sq);
-        g.fill();
+        g.beginPath(); g.moveTo(ox, oy); g.lineTo(ox + nx * sq, oy + ny * sq); g.lineTo(ox + nx * sq + tx * sq, oy + ny * sq + ty * sq); g.lineTo(ox + tx * sq, oy + ty * sq); g.fill();
       }
     }
-
-    // Postes de luz com reflexo no asfalto molhado
+    // postes do lado de fora (a pista roda no sentido horário)
     g.globalCompositeOperation = 'lighter';
     for (let i = 0; i < N; i += 30) {
-      const p = P[i], [ox, oy] = inner2[i];
-      const hgt = 26 * p.s, colr = i % 60 ? '255,190,90' : '120,220,255';
-      // reflexo alongado
-      const rg = g.createRadialGradient(ox, oy + 4, 1, ox, oy + 4, 28 * p.s);
+      const p = P[i], [ox, oy] = inner2[i], hgt = 26 * p.s, colr = i % 60 ? '255,190,90' : '120,220,255';
+      g.save(); g.translate(ox, oy + 4); g.scale(0.6, 1.6);
+      const rg = g.createRadialGradient(0, 0, 1, 0, 0, 28 * p.s);
       rg.addColorStop(0, `rgba(${colr},.35)`); rg.addColorStop(1, `rgba(${colr},0)`);
-      g.save(); g.translate(ox, oy + 4); g.scale(0.6, 1.6); g.translate(-ox, -(oy + 4));
-      g.fillStyle = rg; g.beginPath(); g.arc(ox, oy + 4, 28 * p.s, 0, Math.PI * 2); g.fill();
-      g.restore();
-      // halo da lâmpada
+      g.fillStyle = rg; g.beginPath(); g.arc(0, 0, 28 * p.s, 0, Math.PI * 2); g.fill(); g.restore();
       const hg = g.createRadialGradient(ox, oy - hgt, 1, ox, oy - hgt, 18 * p.s);
       hg.addColorStop(0, `rgba(${colr},.9)`); hg.addColorStop(1, `rgba(${colr},0)`);
       g.fillStyle = hg; g.beginPath(); g.arc(ox, oy - hgt, 18 * p.s, 0, Math.PI * 2); g.fill();
@@ -880,19 +1239,23 @@ const Track = {
     }
   },
 
-  /** Ponto do traçado para um progresso 0..1 (interpolado). */
   at(prog) {
-    const N = this.pts.length, f = ((prog % 1) + 1) % 1 * N, i = Math.floor(f), k = f - i;
+    const N = this.pts.length, f = (((prog % 1) + 1) % 1) * N, i = Math.floor(f), k = f - i;
     const a = this.pts[i % N], b = this.pts[(i + 1) % N];
     return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, a: a.a, s: a.s + (b.s - a.s) * k };
   },
 
-  carWidth() { return clamp(this.w * 0.15, 40, 74); },
+  carWidth() { return clamp(Math.min(this.w * 0.15, this.h * 0.36), 40, 92); },
 
-  /** Avança a simulação: carros correm e completam voltas. */
+  spawnLine(burstMode) {
+    if (this.lines.length > 40) return;
+    this.lines.push({ y: Math.random() * this.h, x: burstMode ? Math.random() * this.w : this.w + 20, v: 900 + Math.random() * 700, l: 30 + Math.random() * 60, a: 0.15 + Math.random() * 0.35 });
+  },
+
   update(dt) {
     if (!this.pts.length) return;
-    const nitro = nitroOn(), mult = nitro ? CONFIG.nitro.mult : 1;
+    this.time += dt;
+    const nitro = nitroOn(), mult = nitro ? CONFIG.nitro.mult : 1, q = Q();
     const n = trackSlots();
     for (let i = 0; i < n; i++) {
       const L = state.track[i];
@@ -902,118 +1265,160 @@ const Track = {
         this.prog[i] -= 1;
         const gain = incomePerLap(L);
         addCoins(gain);
+        state.stats.laps++;
         const p = this.at(this.prog[i]);
-        this.floats.push({ x: p.x, y: p.y - 22 * p.s, t: 0, txt: '+' + fmt(gain) });
-        if (this.floats.length > 24) this.floats.shift();
-        Sfx.coin();
-        bumpCoins();
+        if (this.floats.length < 24) this.floats.push({ x: p.x, y: p.y - 22 * p.s, t: 0, txt: '+' + fmt(gain) });
+        Sfx.coin(); bumpCoins();
+        Bus.emit('lap', gain);
       }
-      // Faíscas de nitro
-      if (nitro && this.sparks.length < 160 && Math.random() < 0.7) {
-        const p = this.at(this.prog[i]), back = p.a + Math.PI;
-        const cw = this.carWidth() * p.s * 0.5;
+      if (nitro && this.sparks.length < q.sparks && Math.random() < 0.7) {
+        const p = this.at(this.prog[i]), back = p.a + Math.PI, cw = this.carWidth() * p.s * 0.5;
         this.sparks.push({
           x: p.x + Math.cos(back) * cw, y: p.y - 5 * p.s + Math.sin(back) * cw,
-          vx: Math.cos(back + (Math.random() - 0.5)) * (60 + Math.random() * 80),
-          vy: Math.sin(back + (Math.random() - 0.5)) * 60 - 20,
+          vx: Math.cos(back + (Math.random() - 0.5)) * (60 + Math.random() * 80), vy: Math.sin(back + (Math.random() - 0.5)) * 60 - 20,
           t: 0, life: 0.25 + Math.random() * 0.3, c: Math.random() < 0.5 ? '#00e5ff' : '#ffb300',
         });
       }
     }
-    // partículas
     for (let i = this.sparks.length - 1; i >= 0; i--) {
       const s = this.sparks[i];
       s.t += dt; s.x += s.vx * dt; s.y += s.vy * dt; s.vy += 200 * dt;
       if (s.t >= s.life) { this.sparks[i] = this.sparks[this.sparks.length - 1]; this.sparks.pop(); }
     }
-    for (let i = this.floats.length - 1; i >= 0; i--) {
-      this.floats[i].t += dt;
-      if (this.floats[i].t > 1.1) this.floats.splice(i, 1);
-    }
+    for (let i = this.floats.length - 1; i >= 0; i--) { this.floats[i].t += dt; if (this.floats[i].t > 1.1) this.floats.splice(i, 1); }
     for (const r of this.rain) { r.y += r.v * dt; r.x -= r.v * 0.15 * dt; if (r.y > this.h) { r.y = -10; r.x = Math.random() * (this.w + 40); } }
+    if (nitro && !reducedMotion() && Math.random() < 0.6) this.spawnLine(false);
+    for (let i = this.lines.length - 1; i >= 0; i--) { const l = this.lines[i]; l.x -= l.v * dt; if (l.x + l.l < 0) this.lines.splice(i, 1); }
+    if (q.rain >= 40 && Math.random() < dt * 6 && this.ripples.length < 8) {
+      const p = this.at(Math.random()), rw = this.roadWidth(p);
+      this.ripples.push({ x: p.x + (Math.random() - 0.5) * rw, y: p.y + (Math.random() - 0.5) * rw * 0.6, t: 0, s: p.s });
+    }
+    for (let i = this.ripples.length - 1; i >= 0; i--) { this.ripples[i].t += dt; if (this.ripples[i].t > 0.6) this.ripples.splice(i, 1); }
   },
 
   draw() {
     const g = this.ctx;
-    if (!g || !this.bg) return;
-    const d = this.dpr;
+    if (!g || !this.bg || !this.pts.length) return;
+    const d = this.dpr, q = Q();
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.drawImage(this.bg, 0, 0);
     g.setTransform(d, 0, 0, d, 0, 0);
 
     const n = trackSlots(), cw = this.carWidth(), nitro = nitroOn();
-    // ordena por profundidade (y)
     const list = [];
-    for (let i = 0; i < n; i++) {
-      if (!state.track[i] || i === this.hidden) { this.positions[i] = null; continue; }
-      const p = this.at(this.prog[i]);
-      list.push({ i, p, L: state.track[i] });
+    for (let i = 0; i < CONFIG.trackSlots.max; i++) {
+      if (i >= n || !state.track[i] || i === this.hidden) { this.positions[i] = null; continue; }
+      list.push({ i, p: this.at(this.prog[i]), L: state.track[i] });
     }
     list.sort((a, b) => a.p.y - b.p.y);
 
-    // rastros de luz (modo aditivo)
     g.globalCompositeOperation = 'lighter';
+    if (this.ripples.length) {
+      g.strokeStyle = 'rgba(160,210,255,.35)'; g.lineWidth = 1;
+      for (const r of this.ripples) {
+        g.globalAlpha = 1 - r.t / 0.6;
+        g.beginPath(); g.ellipse(r.x, r.y, (2 + r.t * 14) * r.s, (1 + r.t * 5) * r.s, 0, 0, Math.PI * 2); g.stroke();
+      }
+      g.globalAlpha = 1;
+    }
+    // rastros de luz
     g.lineCap = 'round';
     for (const c of list) {
       const info = carInfo(c.L);
-      const trail = nitro ? 0.12 : 0.05 + c.L * 0.0012;
-      const segs = 7;
+      const trail = nitro ? 0.13 : 0.05 + c.L * 0.0012, segs = 7;
+      g.strokeStyle = nitro ? '#00e5ff' : info.trail;
       for (let k = 0; k < segs; k++) {
         const p0 = this.at(this.prog[c.i] - (trail * k) / segs - 0.004);
         const p1 = this.at(this.prog[c.i] - (trail * (k + 1)) / segs - 0.004);
-        g.strokeStyle = nitro ? '#00e5ff' : info.trail;
         g.globalAlpha = (1 - k / segs) * 0.55;
         g.lineWidth = (nitro ? 5 : 3) * p0.s;
         g.beginPath(); g.moveTo(p0.x, p0.y - 5 * p0.s); g.lineTo(p1.x, p1.y - 5 * p1.s); g.stroke();
       }
     }
     g.globalAlpha = 1;
-    // faíscas
-    for (const s of this.sparks) {
-      g.fillStyle = s.c; g.globalAlpha = 1 - s.t / s.life;
-      g.fillRect(s.x - 1, s.y - 1, 2.4, 2.4);
+    // faróis (cone de luz à frente do carro)
+    if (q.lights && this.glow) {
+      g.globalAlpha = 0.55;
+      for (const c of list) {
+        const { p } = c, w = cw * p.s;
+        g.save(); g.translate(p.x, p.y - 4 * p.s); g.rotate(p.a);
+        g.drawImage(this.glow, w * 0.38, -w * 0.25, w * 1.1, w * 0.5);
+        g.restore();
+      }
+      g.globalAlpha = 1;
     }
+    for (const s of this.sparks) { g.fillStyle = s.c; g.globalAlpha = 1 - s.t / s.life; g.fillRect(s.x - 1, s.y - 1, 2.4, 2.4); }
     g.globalAlpha = 1;
     g.globalCompositeOperation = 'source-over';
 
     // carros
+    const rm = reducedMotion();
     for (const c of list) {
-      const { p } = c, img = carAsset(c.L).img;
+      const { p } = c, bmp = carBitmap(c.L);
       const w = cw * p.s, h = w / 2;
-      const left = Math.cos(p.a) < 0;   // indo para a esquerda: espelha
+      const left = Math.cos(p.a) < 0;
       let ang = left ? p.a - Math.PI : p.a;
-      ang = Math.atan2(Math.sin(ang), Math.cos(ang));
-      ang = clamp(ang, -0.6, 0.6);
+      ang = clamp(Math.atan2(Math.sin(ang), Math.cos(ang)), -0.6, 0.6);
+      const bob = rm ? 0 : Math.sin(this.time * 22 + c.i * 1.7) * 0.4 * p.s;
       g.save();
       g.translate(p.x, p.y + 2 * p.s);
       g.rotate(ang);
       if (left) g.scale(-1, 1);
-      if (img.complete && img.naturalWidth) g.drawImage(img, -w / 2, -h * 0.9, w, h);
+      if (bmp) {
+        if (q.reflect) {   // reflexo no asfalto molhado
+          g.save(); g.scale(1, -0.55); g.globalAlpha = 0.16;
+          g.drawImage(bmp, -w / 2, -h * 0.25, w, h);
+          g.restore();
+        }
+        g.drawImage(bmp, -w / 2, -h * 0.9 + bob, w, h);
+        if (q.wheels) this.drawWheels(g, c.L, w, h, bob, nitro);
+      }
       g.restore();
-      this.positions[c.i] = { x: p.x, y: p.y - h * 0.4, r: w * 0.5 };
+      this.positions[c.i] = { x: p.x, y: p.y - h * 0.4, r: Math.max(w * 0.55, 22) };
     }
 
-    // chuva fina
-    g.strokeStyle = 'rgba(160,200,255,.18)'; g.lineWidth = 1;
-    g.beginPath();
-    for (const r of this.rain) { g.moveTo(r.x, r.y); g.lineTo(r.x - r.l * 0.15, r.y + r.l); }
-    g.stroke();
-
-    // moedas flutuantes
-    g.font = '14px "Russo One", Impact, sans-serif';
-    g.textAlign = 'center';
-    g.lineWidth = 3; g.strokeStyle = '#000';
-    for (const f of this.floats) {
-      const a = 1 - f.t / 1.1;
-      g.globalAlpha = a;
-      const y = f.y - f.t * 26;
-      g.strokeText(f.txt, f.x, y);
-      g.fillStyle = '#ffcf3a'; g.fillText(f.txt, f.x, y);
+    if (this.lines.length) {
+      g.globalCompositeOperation = 'lighter'; g.strokeStyle = '#bff8ff'; g.lineWidth = 1.2;
+      for (const l of this.lines) { g.globalAlpha = l.a; g.beginPath(); g.moveTo(l.x, l.y); g.lineTo(l.x + l.l, l.y); g.stroke(); }
+      g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
     }
-    g.globalAlpha = 1;
+    if (this.rain.length) {
+      g.strokeStyle = 'rgba(160,200,255,.18)'; g.lineWidth = 1;
+      g.beginPath();
+      for (const r of this.rain) { g.moveTo(r.x, r.y); g.lineTo(r.x - r.l * 0.15, r.y + r.l); }
+      g.stroke();
+    }
+    if (this.floats.length) {
+      g.font = '14px "Russo One", Impact, sans-serif'; g.textAlign = 'center';
+      g.lineWidth = 3; g.strokeStyle = '#000'; g.fillStyle = '#ffcf3a';
+      for (const f of this.floats) {
+        g.globalAlpha = 1 - f.t / 1.1;
+        const y = f.y - f.t * 26;
+        g.strokeText(f.txt, f.x, y); g.fillText(f.txt, f.x, y);
+      }
+      g.globalAlpha = 1;
+    }
   },
 
-  /** Índice do carro sob o ponto (coordenadas de tela) ou −1. */
+  /** Raios girando sobre as rodas desenhadas (coordenadas do SVG 160x80). */
+  drawWheels(g, L, w, h, bob, nitro) {
+    const info = carInfo(L), sh = info.model.shape;
+    const wr = sh.wheels[2] * (1 + 0.07 * info.tier);
+    const sx = w / 160, sy = h / 80, cy = -h * 0.9 + bob + (70 - wr) * sy;
+    const rot = this.time * (nitro ? 36 : 18) * (1 + L * 0.02);
+    g.strokeStyle = 'rgba(20,22,30,.7)'; g.lineWidth = Math.max(1, wr * sx * 0.22);
+    g.beginPath();
+    for (const wx of [sh.wheels[0], sh.wheels[1]]) {
+      const cx = -w / 2 + wx * sx, rr = wr * sx * 0.62;
+      for (let k = 0; k < 2; k++) {
+        const a = rot + k * Math.PI / 2;
+        g.moveTo(cx - Math.cos(a) * rr, cy - Math.sin(a) * rr);
+        g.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr);
+      }
+    }
+    g.stroke();
+  },
+
   hitTest(cx, cy) {
     const r = el.canvas.getBoundingClientRect();
     const x = cx - r.left, y = cy - r.top;
@@ -1021,226 +1426,35 @@ const Track = {
     this.positions.forEach((p, i) => {
       if (!p) return;
       const dd = Math.hypot(p.x - x, p.y - y);
-      if (dd < p.r * 1.1 && dd < bd) { bd = dd; best = i; }
+      if (dd < p.r * 1.15 && dd < bd) { bd = dd; best = i; }
     });
     return best;
   },
 };
 
 /* =========================================================================
-   13) POPUPS (fila para não sobrepor)
+   13) CICLO DE VIDA — offline, background, várias abas
    ========================================================================= */
-const popupQueue = [];
-let popupOpen = false, popupOnClose = null, popupTick = null;
-
-function queuePopup(fn) {
-  popupQueue.push(fn);
-  if (!popupOpen && el.splash.classList.contains('hidden')) nextPopup();
-}
-function nextPopup() {
-  const fn = popupQueue.shift();
-  if (fn) fn();
-}
-/** Abre um popup. opts: {title, body, actions:[{label, cls, onClick}], onClose, tick, closeX} */
-function openPopup(opts) {
-  popupOpen = true;
-  popupOnClose = opts.onClose || null;
-  el.modalCard.innerHTML =
-    (opts.closeX !== false ? '<button class="modal-close" aria-label="Fechar">✕</button>' : '') +
-    (opts.title ? `<h2>${opts.title}</h2>` : '') +
-    `<div class="modal-body">${opts.body || ''}</div>` +
-    (opts.actions ? '<div class="modal-actions"></div>' : '');
-  if (opts.actions) {
-    const box = el.modalCard.querySelector('.modal-actions');
-    opts.actions.forEach((a) => {
-      const b = document.createElement('button');
-      b.className = 'btn ' + (a.cls || 'btn-orange');
-      b.innerHTML = a.label;
-      b.onclick = () => { Sfx.click(); a.onClick ? a.onClick() : closePopup(); };
-      box.appendChild(b);
-    });
-  }
-  const x = el.modalCard.querySelector('.modal-close');
-  if (x) x.onclick = () => { Sfx.click(); closePopup(); };
-  el.modal.classList.remove('hidden');
-  clearInterval(popupTick);
-  if (opts.tick) popupTick = setInterval(opts.tick, 250);
-  if (opts.onOpen) opts.onOpen(el.modalCard);
-}
-function closePopup() {
-  clearInterval(popupTick); popupTick = null;
-  el.modal.classList.add('hidden');
-  el.modalCard.innerHTML = '';
-  popupOpen = false;
-  const cb = popupOnClose; popupOnClose = null;
-  if (cb) cb();
-  setTimeout(nextPopup, 150);
-}
-el.modal.addEventListener('pointerdown', (e) => { if (e.target === el.modal) closePopup(); });
-
-function popupUnlock(L) {
-  const info = carInfo(L);
-  Sfx.unlock(); vibrate([30, 50, 30]);
-  openPopup({
-    title: 'Novo carro desbloqueado!',
-    body: `
-      <div class="unlock-stage"><div class="unlock-rays"></div><img src="${carAsset(L).url}" alt=""></div>
-      <div class="unlock-name">${chapBadge(info.chapter, true)}
-        <div><div>${info.name}</div><small>Capítulo ${info.chapter} · Nível ${L} · ${fmt(incomePerLap(L))}/volta</small></div>
-      </div>
-      <p class="muted center">Registrado na sua Coleção (${state.unlocked.length}/${MAX_LEVEL})</p>`,
-    actions: [{ label: 'SHOW!', cls: 'btn-cyan' }],
-    onOpen: () => { const c = centerOf(el.modalCard); burst(c.x, c.y - 60, [info.acc, '#fff', '#ff7a00', '#00e5ff'], 28); },
-  });
-}
-
-function popupOffline(earned, secs) {
-  openPopup({
-    title: 'Enquanto você estava fora…',
-    body: `<p class="center muted">Sua equipe correu por ${fmtTime(secs)}${secs >= CONFIG.offline.maxSeconds ? ' (máximo de 2h)' : ''} e faturou:</p>
-           <div class="big-num"><span class="coin-ico"></span>${fmt(earned)}</div>`,
-    actions: [{ label: 'COLETAR', cls: 'btn-orange', onClick: () => { Sfx.coin(); bumpCoins(); closePopup(); } }],
-    closeX: false,
-  });
-}
-
-function popupUpgrades() {
-  const render = () => {
-    const rows = Object.entries(CONFIG.upgrades).map(([k, u]) => {
-      const lv = state.upg[k], maxed = lv >= u.max, cost = upgradeCost(k);
-      let cur = '';
-      if (k === 'garage') cur = `${garageSlots()} vagas`;
-      if (k === 'track') cur = `${trackSlots()} vagas`;
-      if (k === 'income') cur = `+${Math.round(lv * u.per * 100)}%`;
-      if (k === 'discount') cur = `−${(lv * u.per * 100).toFixed(1).replace('.', ',')}%`;
-      const pips = u.max <= 16 ? `<div class="upg-lv">${Array.from({ length: u.max }, (_, i) => `<i class="${i < lv ? 'on' : ''}"></i>`).join('')}</div>` : `<small>Nível ${lv}/${u.max}</small>`;
-      return `<div class="upg">
-        <div class="upg-ico">${u.icon}</div>
-        <div class="upg-info"><b>${u.name}</b><small>${u.desc} · atual: ${cur}</small>${pips}</div>
-        <button class="btn ${maxed ? 'btn-dark' : 'btn-cyan'}" data-upg="${k}" ${maxed || state.coins < cost ? 'disabled' : ''}>
-          ${maxed ? 'MÁX' : `COMPRAR<small><span class="coin-ico sm"></span>${fmt(cost)}</small>`}
-        </button></div>`;
-    }).join('');
-    return `${rows}<p class="muted center">Suas moedas: <b style="color:var(--gold)">${fmt(state.coins)}</b></p>`;
-  };
-  let last = '';
-  const refresh = () => {
-    const body = el.modalCard.querySelector('.modal-body');
-    if (!body) return;
-    const html = render();
-    if (html !== last) { last = html; body.innerHTML = html; }
-  };
-  openPopup({ title: 'Upgrades', body: '', tick: refresh });
-  refresh();
-  el.modalCard.querySelector('.modal-body').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-upg]');
-    if (b && !b.disabled) { buyUpgrade(b.dataset.upg); refresh(); }
-  });
-}
-
-function popupCollection() {
-  const got = state.unlocked.length;
-  let rows = '';
-  for (const m of MODELS) {
-    let cards = '';
-    for (let t = 0; t < 3; t++) {
-      const L = (m.chapter - 1) * 3 + t + 1, has = state.unlocked.includes(L);
-      cards += `<div class="col-card t${t}${has ? '' : ' locked'}">
-        <span class="lvb">${L}</span>
-        <img src="${carAsset(L).url}" alt="" loading="lazy">
-        <div class="nm">${has ? carInfo(L).name : '??? · ' + TIERS[t]}</div></div>`;
-    }
-    rows += `<div class="col-row">${chapBadge(m.chapter)}<div class="col-cards">${cards}</div></div>`;
-  }
-  openPopup({
-    title: 'Coleção',
-    body: `<div class="col-progress">${got}/${MAX_LEVEL} carros desbloqueados</div>
-           <div class="col-bar"><i style="width:${(got / MAX_LEVEL) * 100}%"></i></div>${rows}`,
-  });
-}
-
-let deferredInstall = null;
-window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredInstall = e; });
-
-function popupSettings() {
-  const render = () => `
-    <div class="set-row"><span>Som</span><button class="switch ${state.muted ? '' : 'on'}" data-set="sound"></button></div>
-    <div class="set-row"><span>Vibração</span><button class="switch ${state.vibrate ? 'on' : ''}" data-set="vib"></button></div>
-    ${deferredInstall ? '<div class="set-row"><span>Instalar no celular</span><button class="btn btn-cyan" data-set="install" style="padding:8px 14px;font-size:14px">INSTALAR</button></div>' : ''}
-    <div class="set-row"><span>Estatísticas</span><span class="muted">${state.merges} merges · ${fmt(state.totalEarned)} ganhos</span></div>
-    <div class="set-row"><span>Apagar progresso</span><button class="btn btn-danger" data-set="reset" style="padding:8px 14px;font-size:14px">RESETAR</button></div>
-    <p class="legal">PLANET OF THE FURIOUS é um jogo de fã, não oficial e sem fins lucrativos. Todos os carros são desenhos originais feitos por código; nenhuma marca, logo ou arte oficial é utilizada.</p>`;
-  openPopup({ title: 'Configurações', body: render() });
-  const body = el.modalCard.querySelector('.modal-body');
-  body.addEventListener('click', async (e) => {
-    const b = e.target.closest('[data-set]');
-    if (!b) return;
-    const k = b.dataset.set;
-    if (k === 'sound') { state.muted = !state.muted; renderMute(); Sfx.init(); Sfx.click(); }
-    if (k === 'vib') { state.vibrate = !state.vibrate; vibrate(20); }
-    if (k === 'install' && deferredInstall) { deferredInstall.prompt(); await deferredInstall.userChoice; deferredInstall = null; }
-    if (k === 'reset') {
-      if (b.dataset.confirm) {
-        localStorage.removeItem(CONFIG.saveKey);
-        state = defaultState();
-        Track.prog.fill(0);
-        hudCache = {};
-        cellEls.forEach((c) => { c.dataset.k = ''; }); chipEls.forEach((c) => { c.dataset.k = ''; });
-        renderGarage(); renderPit(); renderHUD(); renderMute(); saveState();
-        closePopup(); toast('Progresso apagado. Bora de novo!');
-        return;
-      }
-      b.dataset.confirm = '1'; b.textContent = 'CONFIRMAR?';
-      return;
-    }
-    saveState();
-    body.innerHTML = render();
-  });
-}
-
-function openChest() {
-  Sfx.init();
-  const t = now();
-  if (t < state.chestAt) { toast(`Próximo baú em ${fmtTime((state.chestAt - t) / 1000)}`); Sfx.error(); return; }
-  const coins = Math.max(CONFIG.chest.minCoins, Math.floor(incomePerSec(false) * CONFIG.chest.incomeSeconds));
-  const carL = Math.min(MAX_LEVEL, buyLevel() + 1);
-  const slot = freeGarageIndex();
-  state.chestAt = t + CONFIG.chest.interval * 1000;
-  addCoins(coins);
-  if (slot >= 0) state.garage[slot] = carL;
-  Sfx.chest(); vibrate([20, 30, 60]);
-  saveState();
-  openPopup({
-    title: 'Baú diário',
-    body: `<div class="chest-big">🎁</div>
-      <div class="reward"><div class="big-num"><span class="coin-ico"></span>+${fmt(coins)}</div>
-      ${slot >= 0 ? `<img src="${carAsset(carL).url}" alt=""><div class="muted">${carInfo(carL).name}</div>` : '<p class="muted">Garagem cheia: o carro bônus ficou de fora.</p>'}</div>
-      <p class="muted center">Volte amanhã para outro baú!</p>`,
-    actions: [{ label: 'PEGAR', cls: 'btn-orange' }],
-    onClose: () => {
-      if (slot >= 0) { reachLevel(carL); renderCell(slot, 'new'); }
-      bumpCoins(); renderHUD();
-    },
-  });
-}
-
-/* =========================================================================
-   14) GANHO OFFLINE
-   ========================================================================= */
+/**
+ * Credita o tempo fora (máx. 2h) e grava na hora — fechar o popup,
+ * trocar de app ou recarregar não duplica o ganho.
+ */
 function applyOffline(fromTs) {
-  const secs = clamp((now() - fromTs) / 1000, 0, CONFIG.offline.maxSeconds);
-  if (secs < CONFIG.offline.minSeconds) return;
-  const earned = incomePerSec(false) * secs * CONFIG.offline.rate;
-  if (earned < 1) return;
-  addCoins(earned);       // credita na hora (não perde se fechar o popup)
+  const t = now();
+  const secsRaw = (t - fromTs) / 1000;
+  if (!(secsRaw > 0)) { state.lastSeen = t; return 0; }      // relógio voltou: ignora
+  const secs = Math.min(secsRaw, CONFIG.offline.maxSeconds);
+  if (secs < CONFIG.offline.minSeconds) return 0;
+  const ips = incomePerSec(false);
+  const earned = ips * secs * CONFIG.offline.rate;
+  if (earned < 1) { saveState(); return 0; }
+  addCoins(earned);
   saveState();
-  queuePopup(() => popupOffline(earned, secs));
+  Meta.offlineReward(earned, secs, secsRaw, ips);
+  return earned;
 }
 
-/* =========================================================================
-   15) LOOP PRINCIPAL
-   ========================================================================= */
-let lastFrame = 0, hudAcc = 0, saveAcc = 0, running = false;
+let lastFrame = 0, hudAcc = 0, saveAcc = 0, running = false, gameStarted = false;
 
 function frame(ts) {
   if (!running) return;
@@ -1248,30 +1462,55 @@ function frame(ts) {
   lastFrame = ts;
   Track.update(dt);
   Track.draw();
+  Perf.tick(dt);
   hudAcc += dt; saveAcc += dt * 1000;
   if (hudAcc > 0.15) { hudAcc = 0; renderHUD(); }
   if (saveAcc > CONFIG.autosaveMs) { saveAcc = 0; saveState(); }
   requestAnimationFrame(frame);
 }
 function startLoop() {
-  if (running) return;
+  if (running || frozen || !gameStarted || document.hidden) return;
   running = true; lastFrame = 0;
   requestAnimationFrame(frame);
 }
+function stopLoop() { running = false; }
 
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) {
-    running = false;
-    saveState();
-  } else {
-    applyOffline(state.lastSeen);
-    if (!el.game.classList.contains('hidden')) startLoop();
-  }
+function onHide() {
+  if (!gameStarted) return;
+  Input.cancel();
+  stopLoop();
+  saveState();
+  AudioSys.suspend();
+}
+function onShow() {
+  if (!gameStarted || frozen) return;
+  applyOffline(state.lastSeen);
+  renderGarage(); renderPit(); renderHUD();
+  startLoop();
+  AudioSys.resume();
+  Meta.checkForUpdate();
+}
+document.addEventListener('visibilitychange', () => (document.hidden ? onHide() : onShow()));
+window.addEventListener('pagehide', () => saveState());
+window.addEventListener('pageshow', (e) => { if (e.persisted && !document.hidden) onShow(); });
+document.addEventListener('freeze', () => saveState());   // Chrome Android: aba congelada
+// iOS: o áudio volta "interrompido" após ligação/troca de app — retoma no próximo toque
+window.addEventListener('pointerdown', () => { if (gameStarted && AudioSys.ctx && AudioSys.ctx.state !== 'running' && !document.hidden) AudioSys.unlock(); }, { passive: true });
+
+/* Outra aba salvou por cima: esta para de jogar (um save não sobrescreve o outro). */
+window.addEventListener('storage', (e) => {
+  if (e.key !== CONFIG.saveKey || !e.newValue || frozen) return;
+  frozen = true;
+  stopLoop();
+  Input.cancel();
+  AudioSys.suspend();
+  el.banner.innerHTML = `<p>O jogo foi aberto em outra aba ou janela. Esta foi pausada para não perder progresso.</p><button class="btn btn-cyan btn-sm" id="bannerReload">${icon('refresh')}Jogar aqui</button>`;
+  el.banner.hidden = false;
+  $('#bannerReload').onclick = () => location.reload();
 });
-window.addEventListener('pagehide', saveState);
 
 /* =========================================================================
-   16) GRAFFITI (respingos e escorridos gerados por código)
+   14) GRAFFITI (respingos e escorridos gerados por código)
    ========================================================================= */
 function paintTag(tagEl, seed, intensity) {
   const R = rng(seed);
@@ -1280,15 +1519,13 @@ function paintTag(tagEl, seed, intensity) {
   const drips = tagEl.querySelector('.drips'), spl = tagEl.querySelector('.splatter');
   drips.setAttribute('viewBox', `0 0 ${W} ${H}`);
   let d = '';
-  const n = Math.round(6 * intensity);
-  for (let i = 0; i < n; i++) {
+  for (let i = 0; i < Math.round(6 * intensity); i++) {
     const x = W * (0.15 + R() * 0.75), y0 = H * (0.55 + R() * 0.25), len = H * (0.2 + R() * 0.6) * intensity;
     const w = 2 + R() * 3, col = R() < 0.6 ? '#00e5ff' : '#ff7a00';
     d += `<path d="M${x - w} ${y0} L${x - w * 0.6} ${y0 + len} Q${x} ${y0 + len + w * 2.2} ${x + w * 0.6} ${y0 + len} L${x + w} ${y0} Z" fill="${col}" opacity=".85"/>`;
     d += `<circle cx="${x}" cy="${y0 + len + w * 0.9}" r="${w * 0.9}" fill="${col}" opacity=".85"/>`;
   }
   drips.innerHTML = d;
-  // respingos de spray ao redor
   spl.setAttribute('viewBox', '0 0 100 100');
   spl.setAttribute('preserveAspectRatio', 'none');
   let s = '';
@@ -1301,52 +1538,64 @@ function paintTag(tagEl, seed, intensity) {
 }
 
 /* =========================================================================
-   17) INICIALIZAÇÃO
+   15) INICIALIZAÇÃO (chamada no fim de meta.js)
    ========================================================================= */
-function init() {
-  buildGrid();
-  bindDrag();
-  renderMute();
-  el.btnBuy.addEventListener('click', buyCar);
-  el.btnNitro.addEventListener('click', activateNitro);
-  el.btnChest.addEventListener('click', openChest);
-  el.btnUpgrades.addEventListener('click', () => { Sfx.init(); Sfx.click(); popupUpgrades(); });
-  el.btnCollection.addEventListener('click', () => { Sfx.init(); Sfx.click(); popupCollection(); });
-  el.btnSettings.addEventListener('click', () => { Sfx.init(); Sfx.click(); popupSettings(); });
-  el.btnMute.addEventListener('click', () => { state.muted = !state.muted; Sfx.init(); renderMute(); Sfx.click(); saveState(); });
-
-  // Splash: carro aleatório já desbloqueado
-  const showL = state.unlocked[Math.floor(Math.random() * state.unlocked.length)] || 1;
-  $('#splashCar').src = carAsset(Math.max(showL, 3)).url;
-
-  const paint = () => { paintTag($('#splashTag'), 7, 1); paintTag($('#miniTag'), 11, 0.5); };
-  (document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(paint);
-  paint();
-
-  // Ganho offline calculado já no carregamento (popup após o splash)
-  applyOffline(state.lastSeen);
-
-  $('#btnStart').addEventListener('click', () => {
-    Sfx.init(); Sfx.nitro();
-    el.splash.classList.add('leaving');
-    el.game.classList.remove('hidden');
-    Track.init();
-    renderGarage(); renderPit(); renderHUD();
-    paintTag($('#miniTag'), 11, 0.5);
-    startLoop();
-    setTimeout(() => {
-      el.splash.classList.add('hidden');
-      if (!popupOpen) nextPopup();
-    }, 450);
-  });
-
-  // Service worker (PWA offline)
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-    navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW falhou', e));
-  }
+function preloadImages(levels, timeoutMs) {
+  const loads = levels.map((L) => new Promise((res) => {
+    const img = carAsset(L).img;
+    carBitmap(L);
+    if (img.complete && img.naturalWidth) return res();
+    img.addEventListener('load', res, { once: true });
+    img.addEventListener('error', res, { once: true });
+  }));
+  const fonts = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
+  return Promise.race([Promise.all([...loads, fonts]), new Promise((r) => setTimeout(r, timeoutMs))]);
 }
 
-init();
+function init() {
+  buildGrid();
+  Input.bind();
+  AudioSys.settings = { muted: state.settings.muted, music: state.settings.music, sfx: state.settings.sfx };
+  document.body.classList.toggle('rm', reducedMotion());
+  document.body.classList.toggle('q-low', qualityName() === 'low');
+
+  el.btnBuy.addEventListener('click', buyCar);
+  el.btnNitro.addEventListener('click', activateNitro);
+  el.hudLevel.addEventListener('click', () => { Sfx.init(); Meta.openCollection(); });
+  el.btnSettings.addEventListener('click', () => { Sfx.init(); Meta.openSettings(); });
+  el.reservePill.addEventListener('click', () => toast('Carros do baú esperando vaga: junte ou venda um carro para liberar espaço.'));
+
+  const showL = state.unlocked[Math.floor(Math.random() * state.unlocked.length)] || 1;
+  $('#splashCar').src = carAsset(Math.max(showL, 3)).url;
+  const paint = () => paintTag($('#splashTag'), 7, 1);
+  paint();
+
+  // Pré-carrega os carros do jogador (SVGs locais: rápido). Sem espera artificial.
+  const owned = [...new Set([...state.garage, ...state.track, buyLevel(), Math.max(showL, 3)].filter(Boolean))];
+  preloadImages(owned, 1500).then(() => {
+    paint();
+    $('#btnStart').disabled = false;
+    $('#startLabel').textContent = state.stats.laps > 0 || state.maxLevel > 1 ? 'CONTINUAR' : 'ACELERAR';
+    $('#splashHint').textContent = 'Toque para começar';
+  });
+
+  const start = () => {
+    if (gameStarted || $('#btnStart').disabled) return;
+    gameStarted = true;
+    AudioSys.unlock(); Sfx.nitro();
+    el.splash.classList.add('leaving');
+    el.game.hidden = false;
+    Track.init();
+    renderGarage(); renderPit(); deliverReserve(); renderHUD();
+    paintTag($('#miniTag'), 11, 0.5);
+    applyOffline(state.lastSeen);
+    startLoop();
+    setTimeout(() => { el.splash.hidden = true; Meta.afterStart(); }, 360);
+  };
+  el.splash.addEventListener('click', start);
+  window.addEventListener('keydown', (e) => { if (!gameStarted && (e.key === 'Enter' || e.key === ' ')) start(); });
+  window.addEventListener('resize', () => { if (gameStarted) { Track.resize(); Meta.reposition(); } });
+}
 
 // Ganchos para depuração/testes no console
-window.PF = { state: () => state, CONFIG, incomePerSec, buyPrice, buyLevel, handleDrop, Track };
+window.PF = { state: () => state, CONFIG, incomePerSec, buyPrice, buyLevel, performDrop, describeDrop, Track, Input, Perf, applyOffline, migrateState, saveState, getL };
