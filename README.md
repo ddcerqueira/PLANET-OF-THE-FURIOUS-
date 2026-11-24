@@ -1,40 +1,39 @@
 # PLANET OF THE FURIOUS
 
-Jogo web **mobile-first** de *merge* com carros: junte carros iguais, coloque-os para correr num circuito de rua noturno e fature moedas.
-HTML + CSS + JavaScript puro, sem build e sem dependências. Funciona offline e é instalável como PWA.
+Jogo **mobile-first** de *merge* com carros: junte carros iguais, coloque-os para correr num circuito de rua noturno e fature moedas.
+HTML + CSS + JavaScript puro, sem build e sem dependências. Funciona offline e é instalável como app (PWA).
 
-> Jogo de fã não oficial. Todos os carros são desenhados por código (SVG procedural); não há logos, fontes, personagens nem arte oficial.
+> Jogo de fã não oficial. Carros desenhados por código (SVG procedural) e música original gerada em tempo real; não há logos, fontes, personagens nem arte oficial.
 
 ## Como jogar
-- **Comprar**: cria um carro numa vaga livre da garagem (o preço sobe a cada compra).
-- **Merge**: arraste um carro sobre outro de **mesmo nível** → próximo nível. Níveis diferentes trocam de lugar.
-- **Pista**: arraste da garagem para a pista (ou para uma vaga do pit). Cada volta rende moedas. Arraste de volta (do pit ou direto da pista) para recolher.
-- **Vender**: arraste para a lixeira.
-- **Nitro**: renda x2 por 30s (recarga de 90s). **Baú diário**: moedas + carro bônus a cada 24h.
-- **Upgrades**: garagem maior, mais vagas na pista, patrocínio (+renda), desconto VIP.
-- **Coleção**: 30 carros = 10 capítulos × (Stock → Tuned → Furious).
-- Ganho offline de até 2h ao voltar.
+- **Comprar**: botão grande na parte de baixo. Se não der, ele mostra o motivo (quanto falta ou garagem cheia).
+- **Arrastar** um carro sobre outro de **mesmo nível** funde os dois no próximo nível. Níveis diferentes trocam de lugar.
+- **Tocar para selecionar** (uma mão): toque no carro e depois no destino (outro carro, vaga, pista ou lixeira).
+- **Pista**: arraste para a pista ou para uma vaga do pit; cada volta rende moedas. Arraste de volta para recolher.
+- **Vender**: lixeira (pede confirmação ao vender seu melhor carro).
+- **Nitro** (renda x2 por 30 s, recarga 90 s), **Baú diário** (moedas + carro; se a garagem estiver cheia, o carro fica na reserva).
+- **Upgrades**, **Missões e conquistas**, **Coleção** com ficha de cada carro e **Prestígio** após o nível 30.
+- Ganho offline de até 2 h. Tutorial interativo no primeiro acesso (pode pular e recomeçar em Configurações).
 
 ## Estrutura
 | Arquivo | Conteúdo |
 |---|---|
-| `index.html` | Telas (splash, jogo, popups) |
-| `style.css` | Visual (muro de tijolos, graffiti neon, botões arcade) |
-| `game.js` | Motor: **CONFIG de balanceamento** no topo, estado/salvamento, economia, drag & drop, pista em Canvas, popups, áudio Web Audio |
-| `cars.js` | Os 10 modelos, cores por estágio e gerador SVG dos carros |
-| `manifest.json`, `sw.js`, `icons/` | PWA (instalação + cache offline) |
+| `index.html` | Telas, ícones (SVG sprite) e camadas (painéis, popups, tutorial) |
+| `style.css` | Layout retrato e paisagem, safe areas, zona do polegar, estados visuais |
+| `cars.js` | Os 10 modelos × 3 estágios e o gerador SVG dos carros (+ cache em bitmap para a pista) |
+| `audio.js` | Efeitos e música sintetizados (Web Audio), volumes separados |
+| `game.js` | **CONFIG de balanceamento**, save versionado, economia, garagem, arrastar/tocar, pista em Canvas, qualidade adaptativa, ciclo de vida |
+| `meta.js` | Painéis, popups, upgrades, prestígio, missões, conquistas, coleção, configurações, backup, tutorial, atualização do app |
+| `manifest.json`, `sw.js`, `icons/` | PWA (instalação e cache offline por versão) |
 
 Para rebalancear, edite o objeto `CONFIG` no início de `game.js`.
 
 ## Rodar localmente
-Precisa de um servidor estático (o service worker não funciona via `file://`):
 ```bash
 python3 -m http.server 8080
-# ou: npx serve .
 ```
 Abra http://localhost:8080. No celular, use o IP do computador na mesma rede (ex.: http://192.168.0.10:8080).
 
 ## Publicar
-**Vercel**: `npm i -g vercel` e rode `vercel` na pasta (sem framework, sem build, diretório de saída `.`) — ou importe o repositório em vercel.com. Também funciona em GitHub Pages, Netlify ou Cloudflare Pages.
-
-Ao publicar uma nova versão, aumente `VERSION` em `sw.js` para os jogadores receberem os arquivos novos.
+Funciona em GitHub Pages, Vercel, Netlify ou Cloudflare Pages (sem build).
+**A cada publicação, aumente `VERSION` em `sw.js`** — quem já tem o jogo vê "Nova versão instalada · Atualizar".
