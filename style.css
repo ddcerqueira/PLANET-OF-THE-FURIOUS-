@@ -395,12 +395,17 @@ input, textarea { font-size: 16px; }         /* < 16px faz o iOS dar zoom */
 .buy.cant { background: linear-gradient(180deg, #5a4a52, #3d2f3a); box-shadow: 0 5px 0 #1e1520, inset 0 1px 0 rgba(255, 255, 255, .15); text-shadow: none; }
 .buy.cant .buy-fill { background: linear-gradient(90deg, rgba(255, 140, 0, .45), rgba(255, 180, 60, .55)); }
 .buy.cant img { opacity: .75; }
+.buy.cant .buy-txt b { font-size: 17px; color: #ffe08a; }
+.buy.cant .buy-price .coin-ico { display: none; }
+.buy.cant .buy-price { font-size: 12px; color: #d9cfd6; }
 .buy.full { background: linear-gradient(180deg, #2a3560, #1a2245); box-shadow: 0 5px 0 #0a1030; text-shadow: none; }
 .buy.full .buy-lv, .buy.full .coin-ico { display: none; }
 .buy.full .buy-txt b { font-size: 15px; white-space: normal; line-height: 1.05; }
 .buy.full .buy-price { font-size: 12px; color: var(--muted); }
 @media (max-width: 380px) { .buy.full img { display: none; } .buy img { width: 52px; } .buy-lv { display: none; } }
 @media (max-width: 430px) { .buy.cant .buy-lv { display: none; } }
+@media (max-width: 380px) { .buy.cant img { display: none; } .buy.cant { padding-left: 14px; } }
+@media (orientation: landscape) and (max-height: 430px) { .buy.cant img, .buy.cant .buy-lv { display: none; } .buy.cant { padding-left: 14px; } }
 .buy.shake { animation: shake .3s; }
 @keyframes shake { 20%, 60% { transform: translateX(-5px); } 40%, 80% { transform: translateX(5px); } }
 

@@ -355,7 +355,7 @@ function renderUpgrades() {
         <button class="btn ${maxed ? 'btn-dark' : can ? 'btn-cyan' : 'btn-dark is-off'}" data-upg="${k}" aria-label="${u.name}: ${maxed ? 'nível máximo' : 'comprar por ' + fmt(cost)}">
           ${maxed ? 'MÁX' : `Nv ${lv + 1}<small><span class="coin-ico sm"></span>${fmt(cost)}</small>`}
         </button>
-        ${!maxed && !can ? `<span class="need">faltam ${fmt(cost - state.coins)}</span>` : ''}
+        ${!maxed && !can ? `<span class="need">falta ${fmtShort(cost - state.coins)}</span>` : ''}
       </div></div>`;
   }
   return html + `<p class="muted center">Suas moedas: <b style="color:var(--gold)">${fmt(state.coins)}</b> · renda ${fmt(incomePerSec(false))}/s</p>`;
@@ -368,7 +368,7 @@ function openUpgrades() {
       const k = b.dataset.upg;
       if (state.upg[k] >= CONFIG.upgrades[k].max) return;
       if (buyUpgrade(k)) { const c = centerOf(b); burst(c.x, c.y, ['#00e5ff', '#fff'], 10); }
-      else { toast(`Faltam ${fmt(upgradeCost(k) - state.coins)} moedas`, 'warn'); shake(b); }
+      else { toast(`Falta ${fmtShort(upgradeCost(k) - state.coins)} para este upgrade`, 'warn'); shake(b); }
       Sheet.refresh(true);
     }
     if (e.target.closest('[data-prestige]') && e.type === 'click') openPrestige();
@@ -895,7 +895,7 @@ $('#tutNext').addEventListener('click', () => { Sfx.click(); state.tutorial.step
 /* =========================================================================
    9) ATUALIZAÇÃO DO APP (service worker)
    ========================================================================= */
-const APP_VERSION = '2.1.0';
+const APP_VERSION = '2.1.1';
 let swReg = null, lastUpdateCheck = 0;
 function setupServiceWorker() {
   if (!('serviceWorker' in navigator) || !/^https?:/.test(location.protocol)) return;

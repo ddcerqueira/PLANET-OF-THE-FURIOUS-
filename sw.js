@@ -7,7 +7,7 @@
      "Nova versão instalada — Atualizar".
    - Fontes do Google ficam num cache próprio (stale-while-revalidate).
    ========================================================================= */
-const VERSION = 'potf-v2.1.0';
+const VERSION = 'potf-v2.1.1';
 const FONT_CACHE = 'potf-fonts';
 const SHELL = [
   './', './index.html', './style.css', './cars.js', './audio.js', './game.js', './meta.js', './manifest.json',

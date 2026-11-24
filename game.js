@@ -73,6 +73,8 @@ function fmt(n) {
   const s = n >= 100 ? n.toFixed(0) : n >= 10 ? n.toFixed(1) : n.toFixed(2);
   return s.replace('.', ',') + SUFFIX[i];
 }
+/** Formato curto, sem zeros sobrando: 3,00M → 3M · 2,50M → 2,5M */
+function fmtShort(n) { return fmt(n).replace(/,0+(?=[A-Za-z]*$)/, '').replace(/(,\d*[1-9])0+(?=[A-Za-z]*$)/, '$1'); }
 function fmtTime(sec) {
   sec = Math.max(0, Math.ceil(sec));
   const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
@@ -428,7 +430,12 @@ function renderHUD() {
   if (hudCache.buyDis !== dis) { hudCache.buyDis = dis; el.btnBuy.setAttribute('aria-disabled', dis); }
   let fill = '0%';
   if (!b.free) { setText(el.buyTitle, 'bt', 'GARAGEM CHEIA'); setText(el.buyPrice, 'price', 'Junte ou venda'); }
-  else if (!b.afford) { setText(el.buyTitle, 'bt', 'COMPRAR'); setText(el.buyPrice, 'price', 'Faltam ' + fmt(b.price - state.coins)); fill = Math.floor((state.coins / b.price) * 100) + '%'; }
+  else if (!b.afford) {
+    // o valor que falta vira o destaque do botão
+    setText(el.buyTitle, 'bt', 'FALTA ' + fmtShort(b.price - state.coins));
+    setText(el.buyPrice, 'price', 'Preço ' + fmtShort(b.price));
+    fill = Math.floor((state.coins / b.price) * 100) + '%';
+  }
   else { setText(el.buyTitle, 'bt', 'COMPRAR'); setText(el.buyPrice, 'price', fmt(b.price)); }
   if (hudCache.fill !== fill) { hudCache.fill = fill; el.buyFill.style.width = fill; }
 
@@ -539,7 +546,7 @@ function buyCar() {
   }
   if (!b.afford) {
     const ips = incomePerSec(), missing = b.price - state.coins;
-    toast(`Faltam ${fmt(missing)} moedas` + (ips > 0 ? ` (~${fmtLong(missing / ips)})` : ' — coloque carros na pista'), 'warn');
+    toast(`Falta ${fmtShort(missing)} para comprar` + (ips > 0 ? ` (~${fmtLong(missing / ips)})` : ' — coloque carros na pista'), 'warn');
     Sfx.error(); shake(el.btnBuy); return;
   }
   const i = freeGarageIndex();
